@@ -346,6 +346,21 @@ def _single_line(value: Optional[str]) -> str:
     return " ".join(value.split())
 
 
+# Bodies we wrote ourselves because extraction found nothing. They are not
+# content, and sending them to the LLM produces a confidently useless
+# "enrichment" of our own error message — an entry marked `enriched` with
+# empty tags, which is precisely the state this pipeline exists to avoid.
+PLACEHOLDER_PREFIXES = (
+    "[Failed to extract content from",
+    "[No transcript available",
+)
+
+
+def is_placeholder_content(content: str) -> bool:
+    """True when the body is our own 'nothing found' marker rather than content."""
+    return content.strip().startswith(PLACEHOLDER_PREFIXES)
+
+
 # ──────────────────────────────────────────────
 # Content Type Detection
 # ──────────────────────────────────────────────
@@ -863,7 +878,13 @@ async def process_payload(payload: IngestPayload, entry_id: str) -> str:
             logger.warning(f"[Worker] Article extraction failed: {payload.source_url}")
 
     # ── Enrichment ──
-    enrichment = await enrich_with_llm(payload, video_path=video_path)
+    if is_placeholder_content(payload.content):
+        logger.warning(
+            f"[Worker] Nothing extractable, skipping enrichment: {payload.source_url}"
+        )
+        enrichment = _empty_enrichment(ok=False, reason="no_extractable_content")
+    else:
+        enrichment = await enrich_with_llm(payload, video_path=video_path)
 
     # Status now reflects what actually happened. "enriched" is a claim that
     # tags/summary/insights exist; anything else is "ingested" — captured and
