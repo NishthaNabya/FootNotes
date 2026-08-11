@@ -96,15 +96,51 @@
     for (const tweet of found) {
       const id = tweet.rest_id || tweet.id_str || tweet.id;
       if (id && tweet.legacy?.full_text) {
-        tweet.legacy.rest_id = id;
-        tweetCache.set(id, tweet.legacy);
+        // Cache legacy PLUS the author and any long-form text, both of which
+        // live outside legacy. Storing bare `tweet.legacy` was why every
+        // captured tweet came out authored by "unknown": the user object sits
+        // at tweet.core.user_results.result, one level up, and was discarded.
+        tweetCache.set(id, {
+          ...tweet.legacy,
+          rest_id: id,
+          __user: extractUser(tweet),
+          __noteText: extractNoteText(tweet),
+        });
         count++;
       } else if (id && tweet.full_text) {
-        tweetCache.set(id, tweet);
+        tweetCache.set(id, { ...tweet, rest_id: id, __user: extractUser(tweet) });
         count++;
       }
     }
     return count;
+  }
+
+  // X has moved author fields around over time: older payloads put them in
+  // user.legacy, newer ones in user.core. Check every shape we've seen.
+  function extractUser(tweet) {
+    const result =
+      tweet.core?.user_results?.result ||
+      tweet.author_community_relationship?.user_results?.result ||
+      null;
+    if (!result) return null;
+
+    const legacy = result.legacy || {};
+    const core = result.core || {};
+    const screenName = core.screen_name || legacy.screen_name || "";
+    const name = core.name || legacy.name || "";
+    if (!screenName && !name) return null;
+
+    return { screen_name: screenName, name: name || screenName };
+  }
+
+  // Tweets over 280 characters keep the full body in note_tweet; legacy
+  // .full_text is truncated with an ellipsis and a t.co link.
+  function extractNoteText(tweet) {
+    return (
+      tweet.note_tweet?.note_tweet_results?.result?.text ||
+      tweet.legacy?.note_tweet?.note_tweet_results?.result?.text ||
+      null
+    );
   }
 
   function findAllTweetObjects(obj, depth = 0) {
@@ -125,19 +161,28 @@
   }
 
   function normalizeTweetPayload(tweet) {
-    const user = tweet.user || tweet.core?.user_results?.result?.legacy || tweet.extended_entities?.user || {};
-    const handle = user.screen_name || "unknown";
-    const author = user.name || handle;
+    const user =
+      tweet.__user ||
+      tweet.user ||
+      tweet.core?.user_results?.result?.legacy ||
+      {};
+    const handle = user.screen_name || "i";
+    const author = user.name || user.screen_name || "";
+    const id = tweet.rest_id || tweet.id_str || tweet.id;
+    const text = tweet.__noteText || tweet.full_text || "";
+
     return {
       type: "tweet",
-      source_url: `https://x.com/${handle}/status/${tweet.rest_id || tweet.id_str || tweet.id}`,
+      // x.com/i/status/<id> is X's own handle-agnostic permalink, so an
+      // unresolved author still yields a URL that actually opens the tweet.
+      source_url: `https://x.com/${handle}/status/${id}`,
       source_platform: "x",
       author: author,
-      author_handle: `@${handle}`,
-      title: tweet.full_text?.split("\n")[0]?.slice(0, 100) || "",
+      author_handle: user.screen_name ? `@${user.screen_name}` : "",
+      title: text.split("\n")[0]?.slice(0, 100) || "",
       captured_at: new Date().toISOString(),
-      published_at: tweet.created_at || null,
-      content: tweet.full_text || "",
+      published_at: tweet.created_at ? new Date(tweet.created_at).toISOString() : null,
+      content: text,
     };
   }
   

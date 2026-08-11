@@ -37,13 +37,21 @@ function setupContextMenus() {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== "orbit-save-page") return;
 
+  const url = info.linkUrl || tab.url;
+  const platform = extractPlatform(url);
+
   const payload = {
-    type: "article",
-    source_url: info.linkUrl || tab.url,
-    source_platform: extractPlatform(info.linkUrl || tab.url),
+    // Was hardcoded to "article", which filed every saved YouTube video as an
+    // article. The server re-derives this too, but sending the right value
+    // keeps the payload honest on the wire.
+    type: detectType(url, platform),
+    source_url: url,
+    source_platform: platform,
     author: "",
     author_handle: "",
-    title: tab.title || "",
+    // Only send the tab title when we're saving the tab itself. For a
+    // right-clicked link the tab title describes the wrong page entirely.
+    title: info.linkUrl ? "" : tab.title || "",
     captured_at: new Date().toISOString(),
     published_at: null,
     content: "",
@@ -52,6 +60,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   await sendToServer(payload);
 });
+
+function detectType(url, platform) {
+  if (platform === "youtube") return "youtube";
+  if (platform === "x" && url.includes("/status/")) return "tweet";
+  return "article";
+}
 
 // ──────────────────────────────────────────────
 // 3. MESSAGE LISTENER — From Content Script
