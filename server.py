@@ -457,6 +457,18 @@ VIDEOS_DIR.mkdir(exist_ok=True)
 PLACEHOLDER_TITLES = {"", "youtube", "youtube.com", "watch", "x", "twitter", "untitled"}
 
 
+def is_placeholder_title(title: str) -> bool:
+    """
+    True when a title is browser chrome rather than the content's real name.
+
+    Covers both the bare "YouTube" a tab reports before the SPA settles, and
+    the "<search terms> - YouTube" form you get when the capture happened on a
+    results page. Either way yt-dlp's title is strictly better.
+    """
+    clean = _single_line(title).lower()
+    return clean in PLACEHOLDER_TITLES or clean.endswith("- youtube")
+
+
 def extract_video_id(url: str) -> Optional[str]:
     """Extract the YouTube video ID from various URL formats."""
     patterns = [
@@ -620,6 +632,59 @@ ENRICHMENT_PROMPT = """You are a research librarian organizing someone's persona
 Be concrete. Avoid filler like "discusses" or "talks about". If the content is thin, return fewer tags and insights rather than padding."""
 
 
+RATE_LIMIT_MAX_RETRIES = 4
+RATE_LIMIT_BASE_DELAY = 8  # seconds; doubles each attempt
+
+
+def _is_rate_limit(err: Exception) -> bool:
+    """Detect a 429 without depending on the SDK's exception hierarchy."""
+    return "429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)
+
+
+def _is_daily_quota(err: Exception) -> bool:
+    """
+    Distinguish a per-day quota from a per-minute one.
+
+    The free tier allows 20 requests per day per model. Google returns
+    retryDelay: 7s for that too, which is nonsense — no amount of backing off
+    inside one run will clear a daily limit. Fail fast instead of burning a
+    minute of retries, and tell the caller to come back tomorrow.
+    """
+    return "PerDay" in str(err)
+
+
+async def _generate_with_retry(**kwargs):
+    """
+    Call Gemini, backing off on 429s.
+
+    The free tier's per-minute limit is easy to hit from a burst — a backfill
+    over a full vault will trip it in seconds. Without this, those entries come
+    back unenriched and need a manual second pass.
+    """
+    last_error = None
+    for attempt in range(1, RATE_LIMIT_MAX_RETRIES + 1):
+        try:
+            return await gemini_client.aio.models.generate_content(**kwargs)
+        except Exception as e:
+            last_error = e
+            if _is_daily_quota(e):
+                logger.error(
+                    "[Gemini] Daily free-tier quota exhausted (20 requests/day per "
+                    "model). Remaining entries stay 'ingested'; re-run backfill "
+                    "after the quota resets, or enable billing."
+                )
+                raise
+            if not _is_rate_limit(e) or attempt == RATE_LIMIT_MAX_RETRIES:
+                raise
+            delay = RATE_LIMIT_BASE_DELAY * (2 ** (attempt - 1))
+            logger.warning(
+                f"[Gemini] Rate limited (attempt {attempt}/{RATE_LIMIT_MAX_RETRIES}); "
+                f"retrying in {delay}s"
+            )
+            await asyncio.sleep(delay)
+    raise last_error
+
+
 async def verify_gemini_credentials() -> bool:
     """
     Probe the API once at startup so a bad key is loud instead of silent.
@@ -650,6 +715,17 @@ async def verify_gemini_credentials() -> bool:
         gemini_available = True
         return True
     except Exception as e:
+        # A 429 means the key is valid and we're merely throttled. Treating that
+        # as an auth failure would disable enrichment for the whole session over
+        # a limit that clears in a minute — the per-call backoff handles it.
+        if _is_rate_limit(e):
+            logger.warning(
+                "[Gemini] Rate limited during startup probe. The key is valid; "
+                "enrichment stays enabled and individual calls will back off."
+            )
+            gemini_available = True
+            return True
+
         logger.error(
             f"[Gemini] Credential check FAILED: {type(e).__name__}: {str(e)[:200]}"
         )
@@ -698,7 +774,7 @@ async def enrich_with_llm(payload: IngestPayload, video_path: Optional[str] = No
 
                 if uploaded.state.name == "ACTIVE":
                     try:
-                        response = await gemini_client.aio.models.generate_content(
+                        response = await _generate_with_retry(
                             model=VIDEO_MODEL,
                             contents=["Analyze this video for my knowledge graph.", uploaded],
                             config=generation_config,
@@ -725,7 +801,7 @@ async def enrich_with_llm(payload: IngestPayload, video_path: Optional[str] = No
                 )
                 content_for_analysis = content_for_analysis[:MAX_ENRICHMENT_CHARS]
 
-            response = await gemini_client.aio.models.generate_content(
+            response = await _generate_with_retry(
                 model=TEXT_MODEL,
                 contents=content_for_analysis,
                 config=generation_config,
@@ -819,7 +895,7 @@ async def process_payload(payload: IngestPayload, entry_id: str) -> str:
             if metadata:
                 # Overwrite placeholder titles like "YouTube" that the extension
                 # captures before the SPA has set the real document title.
-                if metadata.get("title") and _single_line(payload.title).lower() in PLACEHOLDER_TITLES:
+                if metadata.get("title") and is_placeholder_title(payload.title):
                     payload.title = metadata["title"]
                 if metadata.get("channel") and not payload.author:
                     payload.author = metadata["channel"]
