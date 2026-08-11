@@ -1,2 +1,34 @@
+# ── Secrets ────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Personal capture data ──────────────────────
+# The vault is your own reading history, and the pipeline rewrites it
+# on every run. Back it up separately, not through git.
+vault/
+
+# ── Dependencies ───────────────────────────────
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ── Build output ───────────────────────────────
+dist/
+build/
+*.tsbuildinfo
+
+# ── Vendored tooling (installed, not authored here) ──
+.agent/
 get-shit-done/
-vault/videos/*.mp4
+
+# ── Editor / OS ────────────────────────────────
+.DS_Store
+.claude/
+*.swp
+
+# ── Scratch ────────────────────────────────────
+*.zip
+*.bundle
