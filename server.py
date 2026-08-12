@@ -851,6 +851,106 @@ def _empty_enrichment(ok: bool = False, reason: str = "") -> dict:
 
 
 # ──────────────────────────────────────────────
+# Vault Reading
+# ──────────────────────────────────────────────
+#
+# The write path has always existed; there was never a read path. Every
+# frontend option (Obsidian, a custom website, a future chat interface) needs
+# entries back out as structured data rather than raw markdown, so this is the
+# one piece worth building before deciding between them.
+#
+# backfill.py has its own copy of this same parser, with extra fallback
+# branches for repairing malformed frontmatter. That duplication is
+# deliberate for now — this path serves live reads and should stay simple and
+# fast; backfill's is a maintenance script that runs rarely and needs to be
+# tolerant of exactly the damage this one has no reason to expect.
+
+# Entry starts: a frontmatter fence immediately followed by an id field.
+# Entry separators ('---' between entries) and horizontal rules inside tweet
+# content can't match this, because they aren't followed by `id:`.
+_ENTRY_START = re.compile(r"^---\n(?=id:)", re.M)
+
+# Body content sits between the content header and the Context footer.
+_CONTENT_BLOCK = re.compile(
+    r"^## (?:Content|Transcript)\n\n(.*?)\n\n## Context\n", re.S | re.M
+)
+
+
+def _coerce_str(value) -> str:
+    """YAML parses some scalars (dates, None) as non-strings; flatten them."""
+    return "" if value is None else str(value)
+
+
+def _coerce_list(value) -> list:
+    return [str(v) for v in value if v] if isinstance(value, list) else []
+
+
+def parse_vault_file(path: Path) -> list[dict]:
+    """
+    Parse one vault file into a list of entry dicts, newest-last (file order).
+
+    Skips entries with unparseable frontmatter or no `id` rather than raising
+    — a single malformed entry (e.g. from a crash mid-write) should not take
+    down every read of the vault.
+    """
+    if not path.exists():
+        return []
+
+    text = path.read_text(encoding="utf-8")
+    starts = [m.start() for m in _ENTRY_START.finditer(text)]
+    entries = []
+
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(text)
+        block = text[start:end]
+
+        fence = block.find("\n---\n", 4)
+        if fence == -1:
+            continue  # truncated entry — skip, don't die
+        fm_raw = block[4:fence]
+        body = block[fence + 5:]
+
+        try:
+            meta = yaml.safe_load(fm_raw) or {}
+        except yaml.YAMLError:
+            continue
+        if not isinstance(meta, dict) or not meta.get("id"):
+            continue
+
+        match = _CONTENT_BLOCK.search(body)
+        content = match.group(1).strip() if match else ""
+
+        entries.append({
+            "id": _coerce_str(meta.get("id")),
+            "type": _coerce_str(meta.get("type")),
+            "source_url": _coerce_str(meta.get("source_url")),
+            "source_platform": _coerce_str(meta.get("source_platform")),
+            "author": _coerce_str(meta.get("author")),
+            "author_handle": _coerce_str(meta.get("author_handle")),
+            "title": _coerce_str(meta.get("title")),
+            "captured_at": _coerce_str(meta.get("captured_at")),
+            "published_at": _coerce_str(meta.get("published_at")) or None,
+            "tags": _coerce_list(meta.get("tags")),
+            "summary": meta.get("summary") or None,
+            "key_insights": _coerce_list(meta.get("key_insights")),
+            "status": _coerce_str(meta.get("status")) or "ingested",
+            "content": content,
+        })
+
+    return entries
+
+
+def load_vault_entries() -> list[dict]:
+    """All entries across both vault files, tagged with their source file."""
+    entries = []
+    for path in (BOOKMARKS_FILE, TRANSCRIPTS_FILE):
+        for entry in parse_vault_file(path):
+            entry["vault_file"] = path.name
+            entries.append(entry)
+    return entries
+
+
+# ──────────────────────────────────────────────
 # Vault Writing
 # ──────────────────────────────────────────────
 
@@ -1180,3 +1280,55 @@ async def stats():
     conn.close()
 
     return {"total": total, "by_status": by_status, "by_type": by_type}
+
+
+@app.get("/entries")
+async def list_entries(
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    tag: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """
+    List vault entries, newest first, with optional filters.
+
+    Returns an excerpt rather than the full body — some transcripts run tens
+    of thousands of characters, and a list view has no use for that. Fetch
+    GET /entries/{id} for the complete entry.
+    """
+    entries = load_vault_entries()
+
+    if type:
+        entries = [e for e in entries if e["type"] == type]
+    if status:
+        entries = [e for e in entries if e["status"] == status]
+    if tag:
+        wanted = tag.lower()
+        entries = [e for e in entries if wanted in (t.lower() for t in e["tags"])]
+    if q:
+        needle = q.lower()
+        entries = [
+            e for e in entries
+            if needle in e["title"].lower() or needle in e["content"].lower()
+        ]
+
+    entries.sort(key=lambda e: e["captured_at"], reverse=True)
+    total = len(entries)
+    page = entries[offset: offset + limit]
+
+    for e in page:
+        e["excerpt"] = e["content"][:280]
+        del e["content"]
+
+    return {"total": total, "count": len(page), "entries": page}
+
+
+@app.get("/entries/{entry_id}")
+async def get_entry(entry_id: str):
+    """Fetch one entry in full, including its complete body."""
+    for entry in load_vault_entries():
+        if entry["id"] == entry_id:
+            return entry
+    raise HTTPException(status_code=404, detail="Entry not found")

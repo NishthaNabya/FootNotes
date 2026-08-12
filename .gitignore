@@ -32,3 +32,4 @@ get-shit-done/
 # ── Scratch ────────────────────────────────────
 *.zip
 *.bundle
+*.log
