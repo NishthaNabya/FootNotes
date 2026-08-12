@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Orbit",
-  "version": "2.1.0",
-  "description": "Frictionless knowledge capture. Bookmark on X, right-click anywhere, and it lands in your local Obsidian vault.",
+  "version": "0.1.0",
+  "description": "Capture what matters while browsing, then find it again from whatever you remember.",
   "permissions": [
     "storage",
-    "contextMenus"
+    "contextMenus",
+    "scripting"
   ],
   "host_permissions": [
     "*://*.x.com/*",
@@ -13,6 +14,10 @@
     "*://*.twitter.com/*",
     "*://twitter.com/*",
     "http://localhost:8000/*"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
   ],
   "icons": {
     "16": "icons/icon16.png",
@@ -59,6 +64,17 @@
       "32": "icons/icon32.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
+    }
+  },
+  "commands": {
+    "open-recall": {
+      "suggested_key": {
+        "default": "Alt+O",
+        "windows": "Alt+O",
+        "linux": "Alt+O",
+        "mac": "Command+Shift+O"
+      },
+      "description": "Open Orbit Recall"
     }
   }
 }

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      width: 300px;
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e8ecf2;
+      background:
+        radial-gradient(ellipse at 70% 90%, rgba(52,216,176,0.07) 0%, transparent 55%),
+        radial-gradient(ellipse at 20% 10%, rgba(91,140,255,0.08) 0%, transparent 55%),
+        #0a0e1a;
+    }
+    .head { display: flex; align-items: center; gap: 9px; padding: 14px 16px 12px; }
+    .head img { width: 26px; height: 26px; }
+    .wordmark { letter-spacing: .26em; font-size: 12px; font-weight: 500; }
+    .sub { font-size: 10px; letter-spacing: .16em; color: rgba(232,236,242,.4); }
+
+    .status { display: flex; align-items: center; gap: 8px; padding: 11px 16px;
+              border-top: 1px solid rgba(255,255,255,.06); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+    .ok   { background: #34d8b0; box-shadow: 0 0 7px #34d8b0; }
+    .warn { background: #f5b443; box-shadow: 0 0 7px #f5b443; }
+    .bad  { background: #ff6b6b; box-shadow: 0 0 7px #ff6b6b; }
+    #statusText { font-size: 12px; }
+
+    .hint { padding: 0 16px 13px; font-size: 11px; color: rgba(232,236,242,.5); }
+    .hint code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 4px;
+                 font-size: 10.5px; user-select: all; }
+
+    .stats { display: none; padding: 4px 16px 14px; }
+    .row { display: flex; justify-content: space-between; font-size: 11.5px; padding: 3px 0;
+           color: rgba(232,236,242,.65); }
+    .row b { color: #e8ecf2; font-weight: 500; }
+    .muted { color: rgba(232,236,242,.35); }
+    .recall { display: block; margin: 0 16px 14px; padding: 9px 12px; border: 1px solid rgba(52,216,176,.35);
+              border-radius: 7px; color: #dffbf4; background: rgba(52,216,176,.08); text-align: center;
+              font: inherit; text-decoration: none; cursor: pointer; width: calc(100% - 32px); }
+    .recall:hover { background: rgba(52,216,176,.14); }
+    .capture-note { display: none; margin: 0 16px 14px; padding: 12px; border: 1px solid rgba(255,255,255,.08);
+                    border-radius: 8px; background: rgba(255,255,255,.025); }
+    .capture-note.saved { display: block; }
+    .saved-label { color: #77e5c8; font-size: 12px; font-weight: 550; }
+    .saved-title { margin: 3px 0 9px; overflow: hidden; color: rgba(232,236,242,.55); font-size: 11px;
+                   text-overflow: ellipsis; white-space: nowrap; }
+    .note-form { display: flex; gap: 6px; }
+    .note-input { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid rgba(255,255,255,.10); border-radius: 6px;
+                  outline: 0; color: #e8ecf2; background: rgba(0,0,0,.18); font: inherit; font-size: 11.5px; }
+    .note-input:focus { border-color: rgba(52,216,176,.45); }
+    .note-save { padding: 6px 9px; border: 0; border-radius: 6px; color: #07120f; background: #6cddbf;
+                 font: inherit; font-size: 11px; cursor: pointer; }
+    .note-save:disabled { opacity: .5; cursor: default; }
+    .note-message { min-height: 16px; margin-top: 5px; color: rgba(232,236,242,.45); font-size: 10.5px; }
+    .resurface-setting { margin: 0 16px 14px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.06); }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #d7dce4;
+                  font-size: 11.5px; cursor: pointer; }
+    .toggle-row input { accent-color: #6cddbf; }
+    .privacy { margin: 5px 24px 0 0; color: rgba(232,236,242,.38); font-size: 10px; line-height: 1.4; }
+    .resurfaced { display: none; margin: 0 16px 14px; padding: 11px; border: 1px solid rgba(108,140,255,.22);
+                  border-radius: 8px; background: rgba(108,140,255,.055); }
+    .resurfaced.visible { display: block; }
+    .resurfaced-title { margin-bottom: 6px; color: #a9b9ff; font-size: 11px; font-weight: 600; }
+    .resurfaced-item { display: block; width: 100%; padding: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,.055);
+                       color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .resurfaced-item:first-of-type { border-top: 0; }
+    .resurfaced-name { overflow: hidden; color: #edf0f5; font-size: 11.5px; font-weight: 550;
+                       text-overflow: ellipsis; white-space: nowrap; }
+    .resurfaced-meta { color: rgba(232,236,242,.42); font-size: 10px; }
+    .resurfaced-preview { margin-top: 3px; overflow: hidden; color: rgba(232,236,242,.62); font-size: 10.5px;
+                          text-overflow: ellipsis; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <div class="head">
+    <img src="icons/icon48.png" alt="" />
+    <div>
+      <div class="wordmark">ORBIT</div>
+      <div class="sub">knowledge capture</div>
+    </div>
+  </div>
+
+  <div class="status">
+    <span id="dot" class="dot warn"></span>
+    <span id="statusText">Checking…</span>
+  </div>
+
+  <div id="hint" class="hint"></div>
+
+  <section class="resurface-setting" aria-label="Contextual resurfacing setting">
+    <label class="toggle-row">
+      <span>Resurface related memories while browsing</span>
+      <input id="resurfacingEnabled" type="checkbox" />
+    </label>
+    <p class="privacy">Off by default. When enabled, bounded public-page context may be sent to your configured embedding provider. It is not saved.</p>
+  </section>
+
+  <section id="resurfaced" class="resurfaced" aria-label="Related memories for this page"></section>
+
+  <section id="captureNote" class="capture-note" aria-label="Recent capture">
+    <div class="saved-label">Saved ✓</div>
+    <div id="savedTitle" class="saved-title"></div>
+    <form id="noteForm" class="note-form">
+      <input id="noteInput" class="note-input" maxlength="500" placeholder="Add a thought…" aria-label="Why did you save this?" />
+      <button id="noteSave" class="note-save" type="submit">Save</button>
+    </form>
+    <div id="noteMessage" class="note-message" aria-live="polite"></div>
+  </section>
+
+  <div id="stats" class="stats">
+    <div class="row"><span>Tweets</span><b id="cTweets">0</b></div>
+    <div class="row"><span>Articles</span><b id="cArticles">0</b></div>
+    <div class="row"><span>Videos</span><b id="cYoutube">0</b></div>
+    <div class="row" style="margin-top:6px;padding-top:7px;border-top:1px solid rgba(255,255,255,.06)">
+      <span>Total saved</span><b id="cTotal">0</b>
+    </div>
+    <div class="row"><span>Enrichment</span><b id="enrich" class="muted">—</b></div>
+    <div class="row"><span>Semantic memory</span><b id="semantic" class="muted">—</b></div>
+    <div class="row"><span>Storage</span><b id="storage" class="muted" title="">—</b></div>
+    <div class="row" id="queueRow" style="display:none"><span>Waiting to send</span><b id="cQueue">0</b></div>
+  </div>
+
+  <button id="openRecall" class="recall" type="button">Recall a memory</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>

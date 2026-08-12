@@ -2,7 +2,7 @@
 
 ## 1. Architecture Overview
 
-The Orbit Python server is the **processing layer** of the system. It receives normalized JSON payloads from the Chrome Extension, enriches them with an LLM, formats them as Markdown with YAML frontmatter, and safely appends them to `vault/bookmarks.md`.
+The Orbit Python server is the **processing layer** of the system. It receives normalized JSON payloads from the Chrome Extension, enriches them through the active provider, and persists portable Markdown plus rebuildable local indexes. Public v0.1 uses Ollama for local enrichment and embeddings. Later Gemini-specific material in this historical walkthrough describes the retained legacy adapter, not the public onboarding path.
 
 It's built on FastAPI and uses async patterns throughout — non-blocking ingestion, background processing, and file-safe writes.
 
@@ -556,8 +556,15 @@ The server listens on `127.0.0.1:8000` — localhost only. It's not exposed to t
 | `POST` | `/ingest` | Submit a bookmark payload. Returns 202 Accepted. |
 | `GET` | `/health` | Check server health and queue size. |
 | `GET` | `/status/{entry_id}` | Look up processing status by UUID. |
+| `GET` | `/entries` | List or filter canonical Markdown memories. |
+| `GET` | `/entries/{entry_id}` | Read one complete memory. |
+| `PATCH` | `/entries/{entry_id}/note` | Set or clear the user's personal thought. |
+| `GET` | `/search` | Hybrid lexical and semantic Recall. |
+| `GET` | `/entries/{entry_id}/related` | Return a few derived semantic neighbors with tag fallback. |
+| `POST` | `/resurface` | Match bounded ephemeral public-page context without saving it. |
+| `GET` | `/stats` | Inspect capture and embedding counts. |
 
-That's it. Three endpoints. The server does one thing and does it well.
+All endpoints remain local to the user's machine.
 
 ### The Gemini Multimodal Brain: AI-Powered Understanding
 

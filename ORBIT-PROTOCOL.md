@@ -25,6 +25,7 @@ author_handle: '<@handle or channel slug>'
 title: <tweet first line, video title, or article headline>
 captured_at: <ISO 8601 timestamp>
 published_at: <original publish date if available, else null>
+user_note: <optional short thought written by the user, else null>
 tags:
 - <auto-extracted>
 - <topic>
@@ -54,6 +55,7 @@ reads them identically. Don't hand-write frontmatter — go through
 | `title` | string | Yes | Extension or API | First line for tweets, title for articles/videos |
 | `captured_at` | string (ISO 8601) | Yes | Extension | When the user bookmarked it |
 | `published_at` | string (ISO 8601) | No | Extension or API | Original publish timestamp |
+| `user_note` | string or null | No | User | Optional personal context: why this mattered or what to do with it. Never AI-generated. |
 | `tags` | array[string] | Yes | LLM enrichment | Auto-extracted topics; empty array if enrichment skipped |
 | `summary` | string or null | No | LLM enrichment | One-sentence distillation |
 | `key_insights` | array[string] | No | LLM enrichment | Bullet-point takeaways |
@@ -98,6 +100,42 @@ same tweet would simply mint a second UUID.
 The normalized value is stored in the `normalized_url` column of the ingest
 log. `POST /ingest` returns `{"status": "duplicate"}` without queueing when a
 URL has already been captured.
+
+### Derived recall index
+
+Markdown remains the canonical durable memory. `vault/ingest.log` also holds a
+rebuildable `memory_embeddings` table keyed by memory, provider, and model. Each
+row records vector dimensions, the hash of the exact canonical provider input,
+status/error, and created/updated timestamps. Vectors are local derived state:
+deleting the table cannot delete a memory, and `backfill_embeddings.py` can
+recreate missing, stale, or failed rows incrementally.
+
+Public v0.1 uses a locally installed Ollama runtime for both enrichment and
+semantic memory. Provider health, structured enrichment, and document/query
+embedding share one narrow contract in `providers.py`; Markdown and retrieval
+do not depend on Ollama. Legacy Gemini vectors remain valid provider-specific
+rows and are never deleted when Local AI becomes active.
+
+The live pipeline writes Markdown successfully before attempting an embedding.
+Provider failure therefore leaves a readable, lexically searchable memory and a
+retryable failed index row; it never changes the capture status to failed.
+
+`user_note` is canonical Markdown data, distinct from generated summaries and
+tags. It is weighted strongly in lexical Recall and included near the beginning
+of the canonical embedding input. Editing it changes that input hash, so only
+that memory's derived embedding becomes stale and is safely rebuilt.
+
+### Ephemeral page context
+
+Contextual resurfacing is opt-in and does not create a memory. The extension
+sends a bounded representation of an ordinary public page (URL, title,
+description, and at most 6,000 characters of readable text) to local
+`POST /resurface`. Form values and typed content are never read. The server may
+send that temporary text to the configured embedding provider as a retrieval
+query, compares it with existing local memory vectors, and keeps only
+similarities of at least `0.84`. Only context hashes and match results are
+cached in process memory; visited page text is never written to Markdown or
+SQLite.
 
 ---
 
@@ -170,14 +208,12 @@ new one and appends a trailing `## Related` section linking to them:
 - [[the-compounding-interest-of-writing-a1b2c3d4|The compounding interest of writing]]
 ```
 
-This is deliberately the cheap version of "connections." It only sees exact
-tag string matches — two entries about the same idea tagged `pkm` and
-`personal-knowledge-management` respectively won't link, and with a small,
-LLM-tagged vault it is common for very few (or zero) entries to share a tag
-at all. A real semantic version (nearest-neighbor over embeddings, already
-partially built as an unused Chroma index) is future work; this is what
-ships now, and it degrades gracefully — an unenriched entry has no tags and
-therefore no links, and gains them automatically the moment it's enriched.
+These generated wikilinks remain the cheap, exact-tag Obsidian view. They are
+not Orbit's canonical relationship store. Runtime Related uses the rebuildable
+local embedding index instead: cosine similarity must reach `0.72`, then each
+shared tag adds `0.03` up to a `0.06` boost. It returns at most a few strong
+neighbors and falls back to these exact tag relationships only where a current
+embedding is missing. Semantic relationships never rewrite Markdown.
 
 Only the linking file needs to be written: Obsidian's backlinks panel
 surfaces the reverse direction automatically for any note that's linked
@@ -223,6 +259,7 @@ mindmap
           Write its own file under vault/<type>/
         Ingest Log
           SQLite metadata
+          Rebuildable embeddings
           Status tracking
           Retry counts
     Storage Layer

@@ -5,6 +5,10 @@
 const ORBIT_SERVER = "http://localhost:8000";
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+const RESURFACE_SCRIPT_ID = "orbit-contextual-resurfacing";
+const RESURFACE_ORIGINS = ["http://*/*", "https://*/*"];
+const resurfacedByTab = new Map();
+const checkedPageByTab = new Map();
 
 // ──────────────────────────────────────────────
 // 1. EXTENSION LIFECYCLE
@@ -14,10 +18,26 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[Orbit] V2 installed — fetch interception active.");
   setupContextMenus();
   restoreOfflineQueue();
+  syncResurfacingRegistration().catch(() => {});
 });
 
 chrome.runtime.onStartup.addListener(() => {
   restoreOfflineQueue();
+  syncResurfacingRegistration().catch(() => {});
+});
+
+// Recall gets a full extension-owned tab rather than a narrow popup. This
+// keeps keyboard navigation stable and gives excerpts enough room to scan.
+chrome.commands.onCommand.addListener((command) => {
+  if (command === "open-recall") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("recall.html") });
+  }
+});
+
+chrome.runtime.onMessage.addListener((request) => {
+  if (request.type === "OPEN_RECALL") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("recall.html") });
+  }
 });
 
 // ──────────────────────────────────────────────
@@ -58,7 +78,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     selection: info.selectionText || null,
   };
 
-  await sendToServer(payload);
+  await sendToServer(payload, tab.id);
 });
 
 function detectType(url, platform) {
@@ -76,12 +96,86 @@ function detectType(url, platform) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === "BOOKMARK_CAPTURED" && request.payload) {
     console.log("[Orbit] Bookmark captured:", request.payload.source_url);
-    sendToServer(request.payload).then(() => {
+    sendToServer(request.payload, sender.tab?.id).then(() => {
       sendResponse({ status: "queued" });
     });
     return true; // Keep message channel open for async response
   }
   return false;
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === "PAGE_CONTEXT" && request.context && sender.tab?.id != null) {
+    handlePageContext(sender.tab.id, request.context, request.fingerprint)
+      .then((state) => sendResponse({
+        count: state?.entries?.length || 0,
+        retry_after_ms: state?.retry_after_ms || 0,
+      }))
+      .catch(() => sendResponse({ count: 0, retry_after_ms: 60_000 }));
+    return true;
+  }
+  if (request.type === "GET_RESURFACED") {
+    chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
+      const state = tab?.id != null ? resurfacedByTab.get(tab.id) : null;
+      sendResponse({ entries: state?.entries || [] });
+    }).catch(() => sendResponse({ entries: [] }));
+    return true;
+  }
+  if (request.type === "ENABLE_RESURFACING_CURRENT_TAB") {
+    syncResurfacingRegistration(true).then(async () => {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (tab?.id != null) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["page-context-state.js", "page-context.js"],
+        });
+      }
+      sendResponse({ ok: true });
+    }).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  return false;
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.resurfacingEnabled) return;
+  syncResurfacingRegistration(changes.resurfacingEnabled.newValue === true).catch(() => {});
+  if (changes.resurfacingEnabled.newValue === true) return;
+  for (const tabId of resurfacedByTab.keys()) {
+    chrome.action.setBadgeText({ tabId, text: "" });
+    chrome.action.setTitle({ tabId, title: "Orbit" });
+  }
+  resurfacedByTab.clear();
+  checkedPageByTab.clear();
+});
+
+async function syncResurfacingRegistration(requestedState = null) {
+  const enabled = requestedState == null
+    ? (await chrome.storage.local.get({ resurfacingEnabled: false })).resurfacingEnabled === true
+    : requestedState;
+  const hasPermission = await chrome.permissions.contains({ origins: RESURFACE_ORIGINS });
+  if (enabled && !hasPermission) {
+    await chrome.storage.local.set({ resurfacingEnabled: false });
+  }
+  const registered = await chrome.scripting.getRegisteredContentScripts({
+    ids: [RESURFACE_SCRIPT_ID],
+  });
+  if (enabled && hasPermission && registered.length === 0) {
+    await chrome.scripting.registerContentScripts([{
+      id: RESURFACE_SCRIPT_ID,
+      matches: RESURFACE_ORIGINS,
+      js: ["page-context-state.js", "page-context.js"],
+      runAt: "document_idle",
+      persistAcrossSessions: true,
+    }]);
+  } else if ((!enabled || !hasPermission) && registered.length > 0) {
+    await chrome.scripting.unregisterContentScripts({ ids: [RESURFACE_SCRIPT_ID] });
+  }
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  resurfacedByTab.delete(tabId);
+  checkedPageByTab.delete(tabId);
 });
 
 // ──────────────────────────────────────────────
@@ -109,7 +203,7 @@ function extractPlatform(url) {
 // server. If the server is down, queues the
 // payload in chrome.storage.local for retry.
 
-async function sendToServer(payload) {
+async function sendToServer(payload, tabId = null) {
   console.log("[Orbit] Sending to server:", payload.type, payload.source_url);
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -122,9 +216,11 @@ async function sendToServer(payload) {
       });
 
       if (response.ok) {
+        const result = await response.json();
         console.log("[Orbit] Ingested successfully:", payload.source_url);
-        await flashBadge("ok");
-        return;
+        await rememberSuccessfulCapture(payload, result);
+        await flashBadge("ok", tabId);
+        return result;
       }
     } catch (err) {
       console.warn(
@@ -151,19 +247,95 @@ async function sendToServer(payload) {
 // indistinguishable from one that worked: both are silent. A brief check on
 // success, and a persistent count of unsent captures on failure.
 
-async function flashBadge(kind) {
+async function flashBadge(kind, tabId = null) {
   const { queue = [] } = await chrome.storage.local.get("queue");
   if (queue.length) return; // don't stomp a pending-queue badge with a checkmark
 
-  await chrome.action.setBadgeBackgroundColor({ color: "#34d8b0" });
-  await chrome.action.setBadgeText({ text: "✓" });
-  setTimeout(() => chrome.action.setBadgeText({ text: "" }), 2000);
+  const target = Number.isInteger(tabId) ? { tabId } : {};
+  await chrome.action.setBadgeBackgroundColor({ ...target, color: "#34d8b0" });
+  await chrome.action.setBadgeText({ ...target, text: "✓" });
+  setTimeout(() => {
+    if (Number.isInteger(tabId)) applyResurfaceBadge(tabId);
+    else chrome.action.setBadgeText({ text: "" });
+  }, 2000);
+}
+
+async function rememberSuccessfulCapture(payload, result) {
+  const entryId = result?.entry_id || result?.existing_id;
+  if (!entryId) return;
+  await chrome.storage.local.set({
+    recentCapture: {
+      entry_id: entryId,
+      title: payload.title || "",
+      source_url: payload.source_url,
+      user_note: result?.user_note || "",
+      saved_at: new Date().toISOString(),
+    },
+  });
 }
 
 async function showQueuedBadge() {
   const { queue = [] } = await chrome.storage.local.get("queue");
   await chrome.action.setBadgeBackgroundColor({ color: "#ff6b6b" });
   await chrome.action.setBadgeText({ text: queue.length ? String(queue.length) : "" });
+  for (const tabId of resurfacedByTab.keys()) {
+    if (queue.length) {
+      await chrome.action.setBadgeBackgroundColor({ tabId, color: "#ff6b6b" });
+      await chrome.action.setBadgeText({ tabId, text: String(queue.length) });
+    } else {
+      await applyResurfaceBadge(tabId);
+    }
+  }
+}
+
+async function applyResurfaceBadge(tabId) {
+  const { queue = [] } = await chrome.storage.local.get("queue");
+  if (queue.length) {
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: "#ff6b6b" });
+    await chrome.action.setBadgeText({ tabId, text: String(queue.length) });
+    return;
+  }
+  const state = resurfacedByTab.get(tabId);
+  const count = state?.entries?.length || 0;
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: "#6c8cff" });
+  await chrome.action.setBadgeText({ tabId, text: count ? String(count) : "" });
+  await chrome.action.setTitle({
+    tabId,
+    title: count ? `Orbit · ${count} related ${count === 1 ? "memory" : "memories"}` : "Orbit",
+  });
+}
+
+async function handlePageContext(tabId, context, fingerprint) {
+  const { resurfacingEnabled = false } = await chrome.storage.local.get("resurfacingEnabled");
+  if (!resurfacingEnabled) return null;
+  if (fingerprint && checkedPageByTab.get(tabId) === fingerprint) {
+    return resurfacedByTab.get(tabId) || null;
+  }
+  checkedPageByTab.set(tabId, fingerprint || context.url);
+  try {
+    const response = await fetch(`${ORBIT_SERVER}/resurface?limit=3`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(context),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    const payload = await response.json();
+    const state = {
+      page_url: context.url,
+      entries: payload.entries || [],
+      retry_after_ms: payload.embedding_available ? 0 : 300_000,
+    };
+    resurfacedByTab.set(tabId, state);
+    if (state.retry_after_ms) checkedPageByTab.delete(tabId);
+    await applyResurfaceBadge(tabId);
+    return state;
+  } catch {
+    resurfacedByTab.delete(tabId);
+    checkedPageByTab.delete(tabId);
+    await applyResurfaceBadge(tabId);
+    return { entries: [], retry_after_ms: 60_000 };
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -197,7 +369,9 @@ async function restoreOfflineQueue() {
       });
 
       if (response.ok) {
+        const result = await response.json();
         console.log("[Orbit] Flushed queued item:", item.payload.source_url);
+        await rememberSuccessfulCapture(item.payload, result);
       } else {
         stillQueued.push(item);
       }

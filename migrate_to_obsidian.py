@@ -70,6 +70,7 @@ async def main() -> int:
             captured_at=_as_str(meta.get("captured_at")),
             published_at=_as_str(meta.get("published_at")) or None,
             content=content,
+            user_note=_as_str(meta.get("user_note")) or None,
         )
         entry_id = _as_str(meta.get("id"))
         content_header = "Transcript" if payload.type == "youtube" and content and not server.is_placeholder_content(content) else "Content"

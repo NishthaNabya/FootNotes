@@ -1,5 +1,17 @@
 # Extension Docs — Orbit V2 Capture Layer (Fetch Interception)
 
+All Chrome-loadable files live under `extension/`. In Developer mode, use
+**Load unpacked** and select `Orbit/extension`; the repository root also holds
+the Python server, virtual environment, tests, scripts, and user vault and is
+not an extension package.
+
+Contextual resurfacing is a separate opt-in content script registered at
+runtime after the user approves optional `http://*/*` and `https://*/*` access.
+It runs only on supported ordinary public pages, ignores forms and private/auth
+surfaces, and sends a maximum 6,000-character temporary context to the local
+server. Results use the extension action badge and popup; no webpage UI is
+injected and no browsing history is stored.
+
 ## 1. Architecture Overview
 
 The Orbit Chrome Extension is the **capture layer** of the system. It intercepts network traffic at the JavaScript level by monkey-patching `window.fetch` and `XMLHttpRequest` in the page's main world, catches the GraphQL responses from X.com's API, normalizes the data, and ships it to your local Python server.

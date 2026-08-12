@@ -34,9 +34,9 @@ Usage:
     python backfill.py               # repair in place (backs up the vault first)
     python backfill.py --force       # also re-enrich entries that already have tags
 
-Requires the same environment as server.py — a .env with a working
-GEMINI_API_KEY. Without one, steps 1-5 still run and entries are left
-'ingested' rather than being falsely marked enriched.
+Uses the same active intelligence provider as server.py. Without a ready
+provider, steps 1-5 still run and entries remain `ingested` rather than being
+falsely marked enriched.
 """
 
 import argparse
@@ -292,6 +292,7 @@ async def repair_entry(meta: dict, content: str, force: bool, dry_run: bool) -> 
         captured_at=_as_str(meta.get("captured_at")),
         published_at=published,
         content=content,
+        user_note=_as_str(meta.get("user_note")) or None,
     )
 
     # ── Enrichment ──
@@ -379,7 +380,7 @@ async def main() -> int:
     print(f"[Backfill] {len(raw)} entries → {len(unique)} unique ({dropped} duplicates dropped)")
 
     if not args.dry_run:
-        await server.verify_gemini_credentials()
+        await server.verify_provider()
 
     # ── Repair each entry ──
     repaired = []

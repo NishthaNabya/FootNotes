@@ -11,5 +11,8 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "typescript": "^6.0.3"
+  },
+  "scripts": {
+    "test:recall-ui": "node --test tests/test_recall_ui.js tests/test_page_context.js"
   }
 }

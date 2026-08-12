@@ -4,11 +4,17 @@ FastAPI server with async queue, file locking, and background worker.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
+import math
 import os
 import re
 import sqlite3
+import signal
+import subprocess
+import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -21,14 +27,30 @@ import trafilatura
 import yaml
 import yt_dlp
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
+from providers import (
+    GeminiProvider,
+    NoAIProvider,
+    OllamaProvider,
+    OLLAMA_EMBEDDING_DIMENSIONS,
+)
+from orbit_config import (
+    OrbitConfig,
+    configured_api_key,
+    load_config,
+    load_gemini_key,
+    save_config,
+)
 from youtube_transcript_api import YouTubeTranscriptApi
 
 # Load environment variables from .env file
 load_dotenv()
+PRODUCT_MODE = os.getenv("ORBIT_PRODUCT_MODE", "").lower() in ("1", "true", "yes")
+PRODUCT_CONFIG = load_config() if PRODUCT_MODE else None
 
 # ──────────────────────────────────────────────
 # Gemini Client (google-genai SDK)
@@ -38,7 +60,7 @@ load_dotenv()
 # NOT validate the key; that only happens on the first request. See
 # verify_gemini_credentials() below, which probes at startup so a bad key
 # surfaces as a loud log line instead of silently empty enrichment forever.
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_API_KEY = configured_api_key(PRODUCT_CONFIG) if PRODUCT_MODE else os.getenv("GEMINI_API_KEY", "").strip()
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # Model selection by content type:
@@ -46,12 +68,20 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 # - 2.5-pro for video: the reasoning headroom is worth the cost when analyzing 10+ min of footage
 TEXT_MODEL = "gemini-2.5-flash"
 VIDEO_MODEL = "gemini-2.5-pro"
+EMBEDDING_MODEL = os.getenv("ORBIT_EMBEDDING_MODEL", "gemini-embedding-001")
+EMBEDDING_DIMENSIONS = int(os.getenv("ORBIT_EMBEDDING_DIMENSIONS", "768"))
 
 # ──────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────
 
-VAULT_DIR = Path(__file__).parent / "vault"
+VAULT_DIR = (
+    Path(os.getenv("ORBIT_VAULT_DIR", "")).expanduser()
+    if os.getenv("ORBIT_VAULT_DIR", "").strip()
+    else PRODUCT_CONFIG.resolved_vault_path
+    if PRODUCT_CONFIG is not None
+    else Path(__file__).parent / "vault"
+)
 INGEST_LOG_DB = VAULT_DIR / "ingest.log"
 
 # One markdown file per entry, grouped by type into subfolders. This is the
@@ -87,7 +117,7 @@ DOWNLOAD_VIDEOS = os.getenv("ORBIT_DOWNLOAD_VIDEOS", "").lower() in ("1", "true"
 # transcript is mostly redundant for tag extraction. Truncate before sending.
 MAX_ENRICHMENT_CHARS = 100_000
 
-VAULT_DIR.mkdir(exist_ok=True)
+VAULT_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -111,14 +141,28 @@ class IngestPayload(BaseModel):
     published_at: Optional[str] = Field(default=None, description="Original publish date")
     content: str = Field(default="", description="Raw text content")
     selection: Optional[str] = Field(default=None, description="User-selected text if any")
+    user_note: Optional[str] = Field(default=None, max_length=500, description="Optional user-authored context")
+
+
+class UserNoteUpdate(BaseModel):
+    user_note: str = Field(default="", max_length=500)
+
+
+class SetupUpdate(BaseModel):
+    vault_path: str = Field(..., max_length=4096)
+    provider: str = Field(default="ollama", pattern="^(none|ollama)$")
+    api_key: str = Field(default="", max_length=500)
+
+
+class PageContext(BaseModel):
+    url: str = Field(..., max_length=2048)
+    title: str = Field(default="", max_length=500)
+    description: str = Field(default="", max_length=1000)
+    text: str = Field(default="", max_length=6000)
 
 
 class EnrichmentResult(BaseModel):
-    """
-    Schema enforced on Gemini's response. Using response_schema with this Pydantic
-    model means Gemini returns guaranteed-valid JSON matching this shape — no more
-    regex-fishing for {...} in the response text.
-    """
+    """Provider-neutral structured enrichment result."""
     tags: list[str] = Field(default_factory=list, description="3-7 lowercase topical tags")
     summary: str = Field(default="", description="One-sentence summary of the core idea")
     key_insights: list[str] = Field(default_factory=list, description="2-5 standalone insights")
@@ -138,12 +182,107 @@ ingest_queue: asyncio.Queue = asyncio.Queue()
 # with the live server.
 vault_write_lock = asyncio.Lock()
 
-# LLM concurrency semaphore — caps simultaneous Gemini calls
+# Provider concurrency semaphore avoids overwhelming cloud or local runtimes.
 llm_semaphore = asyncio.Semaphore(MAX_WORKER_CONCURRENCY)
 
 # Set by verify_gemini_credentials() at startup. When False we skip the API call
 # entirely rather than burning a round-trip per bookmark to rediscover the same 400.
-gemini_available = False
+gemini_available = False  # compatibility field for existing extension clients
+
+
+def build_intelligence_provider(provider_name: str, api_key: str = ""):
+    if provider_name == "ollama":
+        config = load_config()
+        return OllamaProvider(
+            base_url=os.getenv("ORBIT_OLLAMA_URL", "http://127.0.0.1:11434"),
+            embedding_model=os.getenv("ORBIT_OLLAMA_EMBEDDING_MODEL", config.ollama_embedding_model),
+            enrichment_model=os.getenv("ORBIT_OLLAMA_ENRICHMENT_MODEL", config.ollama_enrichment_model),
+            dimensions=OLLAMA_EMBEDDING_DIMENSIONS,
+        )
+    if provider_name == "gemini":
+        client = genai.Client(api_key=api_key) if api_key else None
+        return GeminiProvider(
+            client,
+            lambda: gemini_available,
+            model=EMBEDDING_MODEL,
+            dimensions=EMBEDDING_DIMENSIONS,
+            enrichment_model=TEXT_MODEL,
+            video_model=VIDEO_MODEL,
+        )
+    return NoAIProvider()
+
+
+def selected_provider_name(config: Optional[OrbitConfig], product_mode: bool) -> str:
+    override = os.getenv("ORBIT_INTELLIGENCE_PROVIDER", "").strip()
+    if override:
+        return override
+    if config is not None:
+        # Public upgrades move legacy cloud mode to Local AI without deleting
+        # its key or provider-specific vectors. Source developers can still
+        # explicitly select the retained adapter via environment configuration.
+        return "ollama" if product_mode and config.provider == "gemini" else config.provider
+    return "gemini" if GEMINI_API_KEY else "none"
+
+# Retrieval and persistence depend only on the small provider contract in
+# providers.py. Tests and future local providers can replace this object
+# without changing the vault or search implementation.
+ACTIVE_PROVIDER_NAME = selected_provider_name(PRODUCT_CONFIG, PRODUCT_MODE)
+intelligence_provider = build_intelligence_provider(ACTIVE_PROVIDER_NAME, GEMINI_API_KEY)
+embedding_provider = intelligence_provider
+provider_health = {
+    "provider": ACTIVE_PROVIDER_NAME,
+    "runtime_available": False,
+    "embedding_ready": False,
+    "enrichment_ready": False,
+    "missing_models": [],
+    "message": "Not checked yet.",
+}
+
+# Ephemeral only: keys and results disappear on process restart and are never
+# written to SQLite or Markdown. This avoids repeated provider calls for an
+# unchanged page without turning browsing into stored history.
+resurface_cache: dict[str, tuple[float, dict]] = {}
+embedding_reconciliation = {
+    "running": False,
+    "processed_this_session": 0,
+    "last_result": "idle",
+}
+
+
+def configure_runtime(vault_path: Path, provider: str, api_key: str = "") -> None:
+    """Apply first-run settings without rewriting any existing memory.
+
+    This is used only by the local setup surface.  New work immediately uses
+    the selected folder; Markdown and its adjacent derived SQLite index move
+    only when the user explicitly selects an existing folder.
+    """
+    global VAULT_DIR, INGEST_LOG_DB, LEGACY_BOOKMARKS_FILE
+    global LEGACY_TRANSCRIPTS_FILE, VIDEOS_DIR, GEMINI_API_KEY
+    global gemini_client, gemini_available, embedding_provider
+    global intelligence_provider, provider_health, ACTIVE_PROVIDER_NAME
+
+    resolved = Path(vault_path).expanduser().resolve()
+    resolved.mkdir(parents=True, exist_ok=True)
+    VAULT_DIR = resolved
+    INGEST_LOG_DB = VAULT_DIR / "ingest.log"
+    LEGACY_BOOKMARKS_FILE = VAULT_DIR / "bookmarks.md"
+    LEGACY_TRANSCRIPTS_FILE = VAULT_DIR / "transcripts.md"
+    VIDEOS_DIR = VAULT_DIR / "videos"
+    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+
+    GEMINI_API_KEY = api_key.strip() if provider == "gemini" else ""
+    gemini_available = False
+    ACTIVE_PROVIDER_NAME = provider
+    intelligence_provider = build_intelligence_provider(provider, GEMINI_API_KEY)
+    embedding_provider = intelligence_provider
+    gemini_client = getattr(intelligence_provider, "_client", None) if provider == "gemini" else None
+    provider_health = {
+        "provider": provider, "runtime_available": False,
+        "embedding_ready": False, "enrichment_ready": False,
+        "missing_models": [], "message": "Not checked yet.",
+    }
+    resurface_cache.clear()
+    init_ingest_log()
 
 
 # ──────────────────────────────────────────────
@@ -219,6 +358,7 @@ def init_ingest_log():
             type TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'queued',
             retries INTEGER DEFAULT 0,
+            user_note TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -238,9 +378,33 @@ def init_ingest_log():
                 "UPDATE ingest_log SET normalized_url = ? WHERE id = ?",
                 (normalize_url(url), row_id),
             )
+    if "user_note" not in columns:
+        logger.info("[DB] Migrating ingest_log: adding user_note")
+        cursor.execute("ALTER TABLE ingest_log ADD COLUMN user_note TEXT")
 
     cursor.execute(
         "CREATE INDEX IF NOT EXISTS idx_normalized_url ON ingest_log(normalized_url)"
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_embeddings (
+            entry_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            dimensions INTEGER,
+            content_hash TEXT NOT NULL,
+            vector_json TEXT,
+            status TEXT NOT NULL,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (entry_id, provider, model)
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_embedding_status "
+        "ON memory_embeddings(status)"
     )
     conn.commit()
     conn.close()
@@ -301,6 +465,30 @@ def find_existing_entry(url: str) -> Optional[tuple]:
     return row
 
 
+def set_ingest_user_note(entry_id: str, user_note: str) -> bool:
+    """Persist a note against an accepted capture, including while it is queued."""
+    init_ingest_log()
+    conn = sqlite3.connect(str(INGEST_LOG_DB))
+    cursor = conn.execute(
+        "UPDATE ingest_log SET user_note = ?, updated_at = ? WHERE id = ?",
+        (user_note, datetime.now(timezone.utc).isoformat(), entry_id),
+    )
+    conn.commit()
+    changed = cursor.rowcount > 0
+    conn.close()
+    return changed
+
+
+def get_ingest_user_note(entry_id: str) -> Optional[str]:
+    init_ingest_log()
+    conn = sqlite3.connect(str(INGEST_LOG_DB))
+    row = conn.execute(
+        "SELECT user_note FROM ingest_log WHERE id = ?", (entry_id,)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+
 # ──────────────────────────────────────────────
 # Markdown Template Engine
 # ──────────────────────────────────────────────
@@ -337,6 +525,7 @@ def format_bookmark_entry(
         "title": _single_line(payload.title),
         "captured_at": payload.captured_at,
         "published_at": payload.published_at,
+        "user_note": payload.user_note.strip() if payload.user_note else None,
         "tags": tags or [],
         "summary": summary or None,
         "key_insights": key_insights or [],
@@ -420,7 +609,7 @@ def entry_path(payload: IngestPayload, entry_id: str) -> Path:
 
 
 def detect_platform(url: str) -> str:
-    """Classify a URL's origin. Mirrors extractPlatform() in background.js."""
+    """Classify a URL's origin. Mirrors extractPlatform() in extension/background.js."""
     if not url:
         return "other"
     try:
@@ -673,7 +862,7 @@ def _yt_dlp_download(url: str, video_id: str) -> Optional[str]:
 
 
 # ──────────────────────────────────────────────
-# LLM Enrichment (google-genai SDK)
+# Provider-neutral enrichment
 # ──────────────────────────────────────────────
 
 ENRICHMENT_PROMPT = """You are a research librarian organizing someone's personal knowledge graph. Analyze this content and extract:
@@ -685,200 +874,47 @@ ENRICHMENT_PROMPT = """You are a research librarian organizing someone's persona
 Be concrete. Avoid filler like "discusses" or "talks about". If the content is thin, return fewer tags and insights rather than padding."""
 
 
-RATE_LIMIT_MAX_RETRIES = 4
-RATE_LIMIT_BASE_DELAY = 8  # seconds; doubles each attempt
-
-
-def _is_rate_limit(err: Exception) -> bool:
-    """Detect a 429 without depending on the SDK's exception hierarchy."""
-    return "429" in str(err) or "RESOURCE_EXHAUSTED" in str(err)
-
-
-def _is_daily_quota(err: Exception) -> bool:
-    """
-    Distinguish a per-day quota from a per-minute one.
-
-    The free tier allows 20 requests per day per model. Google returns
-    retryDelay: 7s for that too, which is nonsense — no amount of backing off
-    inside one run will clear a daily limit. Fail fast instead of burning a
-    minute of retries, and tell the caller to come back tomorrow.
-    """
-    return "PerDay" in str(err)
-
-
-async def _generate_with_retry(**kwargs):
-    """
-    Call Gemini, backing off on 429s.
-
-    The free tier's per-minute limit is easy to hit from a burst — a backfill
-    over a full vault will trip it in seconds. Without this, those entries come
-    back unenriched and need a manual second pass.
-    """
-    last_error = None
-    for attempt in range(1, RATE_LIMIT_MAX_RETRIES + 1):
-        try:
-            return await gemini_client.aio.models.generate_content(**kwargs)
-        except Exception as e:
-            last_error = e
-            if _is_daily_quota(e):
-                logger.error(
-                    "[Gemini] Daily free-tier quota exhausted (20 requests/day per "
-                    "model). Remaining entries stay 'ingested'; re-run backfill "
-                    "after the quota resets, or enable billing."
-                )
-                raise
-            if not _is_rate_limit(e) or attempt == RATE_LIMIT_MAX_RETRIES:
-                raise
-            delay = RATE_LIMIT_BASE_DELAY * (2 ** (attempt - 1))
-            logger.warning(
-                f"[Gemini] Rate limited (attempt {attempt}/{RATE_LIMIT_MAX_RETRIES}); "
-                f"retrying in {delay}s"
-            )
-            await asyncio.sleep(delay)
-    raise last_error
-
-
 async def verify_gemini_credentials() -> bool:
-    """
-    Probe the API once at startup so a bad key is loud instead of silent.
+    """Compatibility wrapper; health is owned by the active provider."""
+    return await verify_provider()
 
-    Without this the first sign of trouble is a vault full of entries marked
-    "enriched" with empty tags — which is exactly how the existing 15 entries
-    got that way. Constructing genai.Client() never validates anything.
-    """
-    global gemini_available
 
-    if not GEMINI_API_KEY:
-        logger.error(
-            "[Gemini] GEMINI_API_KEY is not set. Enrichment is DISABLED — "
-            "bookmarks will still be captured and saved with status 'ingested'. "
-            "Copy .env.example to .env and add a key from "
-            "https://aistudio.google.com/apikey"
-        )
-        gemini_available = False
-        return False
-
+async def verify_provider() -> bool:
+    global gemini_available, provider_health
     try:
-        await gemini_client.aio.models.generate_content(
-            model=TEXT_MODEL,
-            contents="ping",
-            config=types.GenerateContentConfig(max_output_tokens=1000),
-        )
-        logger.info(f"[Gemini] Credentials verified — enrichment active ({TEXT_MODEL}).")
-        gemini_available = True
-        return True
-    except Exception as e:
-        # A 429 means the key is valid and we're merely throttled. Treating that
-        # as an auth failure would disable enrichment for the whole session over
-        # a limit that clears in a minute — the per-call backoff handles it.
-        if _is_rate_limit(e):
-            logger.warning(
-                "[Gemini] Rate limited during startup probe. The key is valid; "
-                "enrichment stays enabled and individual calls will back off."
-            )
-            gemini_available = True
-            return True
-
-        logger.error(
-            f"[Gemini] Credential check FAILED: {type(e).__name__}: {str(e)[:200]}"
-        )
-        logger.error(
-            "[Gemini] Enrichment is DISABLED for this session. Bookmarks will be "
-            "captured and saved with status 'ingested' so nothing is lost; fix the "
-            "key and re-run backfill to enrich them."
-        )
-        gemini_available = False
-        return False
+        provider_health = await intelligence_provider.check_health()
+    except Exception as exc:
+        provider_health = {
+            "provider": intelligence_provider.name,
+            "runtime_available": False,
+            "embedding_ready": False,
+            "enrichment_ready": False,
+            "missing_models": [],
+            "message": f"Provider unavailable: {type(exc).__name__}",
+        }
+    gemini_available = intelligence_provider.name == "gemini" and intelligence_provider.enrichment_available
+    level = logger.info if provider_health.get("enrichment_ready") else logger.warning
+    level(f"[Provider:{intelligence_provider.name}] {provider_health.get('message', 'Unavailable')}")
+    return bool(provider_health.get("embedding_ready") and provider_health.get("enrichment_ready"))
 
 
 async def enrich_with_llm(payload: IngestPayload, video_path: Optional[str] = None) -> dict:
-    """
-    Enrich content with Gemini, returning structured tags/summary/insights.
-
-    Returns a dict with an "ok" flag so the caller can tell "the model returned
-    nothing because the content was thin" from "the call failed". The old
-    version collapsed both into an empty dict and then wrote status "enriched"
-    either way.
-
-    Uses response_schema to guarantee valid JSON output — no regex parsing,
-    no markdown-fenced JSON to strip, no fallback-on-malformed-output paths.
-    """
-    if not gemini_available:
-        return _empty_enrichment(ok=False, reason="gemini_unavailable")
+    """Enrich through the active provider without coupling persistence to it."""
+    if not intelligence_provider.enrichment_available:
+        return _empty_enrichment(ok=False, reason=f"{intelligence_provider.name}_unavailable")
 
     async with llm_semaphore:
         try:
-            generation_config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=EnrichmentResult,
-                system_instruction=ENRICHMENT_PROMPT,
-            )
-
-            # ── Video path: upload the MP4 the worker already finished downloading ──
-            if video_path and Path(video_path).exists():
-                logger.info(f"[Gemini] Uploading local video: {Path(video_path).name}")
-                uploaded = await gemini_client.aio.files.upload(file=video_path)
-
-                # Poll until ACTIVE — Gemini processes video before it can be referenced
-                while uploaded.state.name == "PROCESSING":
-                    logger.info("[Gemini] Waiting for video processing…")
-                    await asyncio.sleep(2)
-                    uploaded = await gemini_client.aio.files.get(name=uploaded.name)
-
-                if uploaded.state.name == "ACTIVE":
-                    try:
-                        response = await _generate_with_retry(
-                            model=VIDEO_MODEL,
-                            contents=["Analyze this video for my knowledge graph.", uploaded],
-                            config=generation_config,
-                        )
-                        return _parse_structured_response(response)
-                    finally:
-                        try:
-                            await gemini_client.aio.files.delete(name=uploaded.name)
-                        except Exception as cleanup_err:
-                            logger.warning(f"[Gemini] File cleanup failed: {cleanup_err}")
-                else:
-                    logger.error(f"[Gemini] Video processing failed: {uploaded.state.name}")
-
-            # ── Text path: tweet, article, or YouTube transcript ──
             content_for_analysis = payload.content or payload.title or payload.source_url
             if not content_for_analysis.strip():
-                logger.warning("[Gemini] No content to analyze, returning empty enrichment")
                 return _empty_enrichment(ok=False, reason="no_content")
-
             if len(content_for_analysis) > MAX_ENRICHMENT_CHARS:
-                logger.info(
-                    f"[Gemini] Truncating {len(content_for_analysis)} chars "
-                    f"to {MAX_ENRICHMENT_CHARS} for enrichment"
-                )
                 content_for_analysis = content_for_analysis[:MAX_ENRICHMENT_CHARS]
-
-            response = await _generate_with_retry(
-                model=TEXT_MODEL,
-                contents=content_for_analysis,
-                config=generation_config,
-            )
-            return _parse_structured_response(response)
-
-        except Exception as e:
-            logger.error(f"[Gemini] Enrichment failed: {type(e).__name__}: {str(e)[:200]}")
-            return _empty_enrichment(ok=False, reason=type(e).__name__)
-
-
-def _parse_structured_response(response) -> dict:
-    """
-    Parse a Gemini response that was constrained by response_schema.
-
-    With response_schema set, response.parsed is the typed Pydantic instance.
-    response.text is the raw JSON. We try parsed first, fall back to text.
-    """
-    try:
-        if getattr(response, "parsed", None) is not None:
-            result: EnrichmentResult = response.parsed
-            logger.info(
-                f"[Gemini] Enriched: {len(result.tags)} tags, "
-                f"{len(result.key_insights)} insights"
+            result = await intelligence_provider.enrich(
+                content_for_analysis,
+                ENRICHMENT_PROMPT,
+                EnrichmentResult,
+                video_path=video_path,
             )
             return {
                 "ok": True,
@@ -886,17 +922,12 @@ def _parse_structured_response(response) -> dict:
                 "summary": result.summary or None,
                 "key_insights": result.key_insights,
             }
-
-        data = json.loads(response.text)
-        return {
-            "ok": True,
-            "tags": data.get("tags", []),
-            "summary": data.get("summary") or None,
-            "key_insights": data.get("key_insights", []),
-        }
-    except (json.JSONDecodeError, AttributeError, TypeError) as e:
-        logger.error(f"[Gemini] Failed to parse structured response: {e}")
-        return _empty_enrichment(ok=False, reason="unparseable_response")
+        except Exception as exc:
+            logger.error(
+                f"[Provider:{intelligence_provider.name}] Enrichment failed: "
+                f"{type(exc).__name__}: {str(exc)[:200]}"
+            )
+            return _empty_enrichment(ok=False, reason=type(exc).__name__)
 
 
 def _empty_enrichment(ok: bool = False, reason: str = "") -> dict:
@@ -980,6 +1011,7 @@ def parse_entry_file(path: Path) -> Optional[dict]:
         "title": _coerce_str(meta.get("title")),
         "captured_at": _coerce_str(meta.get("captured_at")),
         "published_at": _coerce_str(meta.get("published_at")) or None,
+        "user_note": _coerce_str(meta.get("user_note")),
         "tags": _coerce_list(meta.get("tags")),
         "summary": meta.get("summary") or None,
         "key_insights": _coerce_list(meta.get("key_insights")),
@@ -1001,16 +1033,471 @@ def load_vault_entries() -> list[dict]:
 
 
 # ──────────────────────────────────────────────
+# Local Embedding Index
+# ──────────────────────────────────────────────
+
+MAX_EMBEDDING_CHARS = 50_000
+
+
+def embedding_document(entry: dict) -> str:
+    """Build the provider-neutral text representation of one memory."""
+    parts = [
+        f"User note: {entry.get('user_note', '')}",
+        f"Title: {entry.get('title', '')}",
+        f"Author: {entry.get('author', '')} {entry.get('author_handle', '')}",
+        f"Source: {entry.get('source_platform', '')} {entry.get('source_url', '')}",
+        f"Tags: {' '.join(entry.get('tags') or [])}",
+        f"Summary: {entry.get('summary') or ''}",
+        "Insights: " + " ".join(entry.get("key_insights") or []),
+        f"Content: {entry.get('content', '')}",
+    ]
+    return "\n".join(parts).strip()
+
+
+def canonical_embedding_input(entry: dict) -> str:
+    """Exactly the canonical provider input, including its size bound."""
+    return embedding_document(entry)[:MAX_EMBEDDING_CHARS]
+
+
+def embedding_content_hash(entry: dict) -> str:
+    """Hash only the canonical text actually sent to the provider."""
+    document = canonical_embedding_input(entry)
+    prepare = getattr(embedding_provider, "prepare_document", None)
+    if callable(prepare):
+        document = prepare(document, entry.get("title", ""))
+    return hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def _embedding_row(entry_id: str) -> Optional[tuple]:
+    init_ingest_log()
+    conn = sqlite3.connect(str(INGEST_LOG_DB))
+    row = conn.execute(
+        "SELECT provider, model, dimensions, content_hash, vector_json, status, error "
+        "FROM memory_embeddings WHERE entry_id = ? AND provider = ? AND model = ?",
+        (entry_id, embedding_provider.name, embedding_provider.model),
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def _save_embedding_state(
+    entry_id: str,
+    content_hash: str,
+    status: str,
+    vector: Optional[list[float]] = None,
+    error: Optional[str] = None,
+) -> None:
+    init_ingest_log()
+    now = datetime.now(timezone.utc).isoformat()
+    vector_json = json.dumps(vector, separators=(",", ":")) if vector else None
+    conn = sqlite3.connect(str(INGEST_LOG_DB))
+    conn.execute(
+        """
+        INSERT INTO memory_embeddings
+            (entry_id, provider, model, dimensions, content_hash, vector_json,
+             status, error, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(entry_id, provider, model) DO UPDATE SET
+            dimensions = excluded.dimensions,
+            content_hash = excluded.content_hash,
+            vector_json = excluded.vector_json,
+            status = excluded.status,
+            error = excluded.error,
+            updated_at = excluded.updated_at
+        """,
+        (
+            entry_id,
+            embedding_provider.name,
+            embedding_provider.model,
+            len(vector) if vector else embedding_provider.dimensions,
+            content_hash,
+            vector_json,
+            status,
+            error,
+            now,
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    resurface_cache.clear()
+
+
+async def ensure_entry_embedding(
+    entry: dict, force: bool = False, _superseded_attempts: int = 0
+) -> str:
+    """
+    Ensure one memory has a current vector. Safe and idempotent.
+
+    Failure is recorded for resumable backfill and never mutates the Markdown
+    memory. A ready vector is reused only when provider, model, and content
+    hash all still match.
+    """
+    content_hash = embedding_content_hash(entry)
+    existing = _embedding_row(entry["id"])
+    if (
+        not force
+        and existing
+        and existing[0] == embedding_provider.name
+        and existing[1] == embedding_provider.model
+        and existing[2] == embedding_provider.dimensions
+        and existing[3] == content_hash
+        and existing[5] == "ready"
+        and existing[4]
+    ):
+        return "unchanged"
+
+    try:
+        document = canonical_embedding_input(entry)
+        prepare = getattr(embedding_provider, "prepare_document", None)
+        if callable(prepare):
+            document = prepare(document, entry.get("title", ""))
+        vector = await embedding_provider.embed_document(
+            document, title=entry.get("title", "")
+        )
+        if not vector or any(not math.isfinite(float(value)) for value in vector):
+            raise ValueError("invalid embedding vector")
+
+        # The user may edit their note while a provider request is in flight.
+        # Never let that older result overwrite the newer canonical state.
+        current = next(
+            (candidate for candidate in load_vault_entries() if candidate["id"] == entry["id"]),
+            None,
+        )
+        if current and embedding_content_hash(current) != content_hash:
+            logger.info(f"[Embedding] Discarding superseded vector for {entry['id']}")
+            if _superseded_attempts >= 2:
+                return "stale"
+            return await ensure_entry_embedding(
+                current,
+                force=force,
+                _superseded_attempts=_superseded_attempts + 1,
+            )
+        _save_embedding_state(entry["id"], content_hash, "ready", vector=vector)
+        logger.info(f"[Embedding] Indexed {entry['id']} ({len(vector)} dimensions)")
+        return "embedded"
+    except Exception as exc:
+        current = next(
+            (candidate for candidate in load_vault_entries() if candidate["id"] == entry["id"]),
+            None,
+        )
+        if current and embedding_content_hash(current) != content_hash:
+            logger.info(f"[Embedding] Discarding superseded failure for {entry['id']}")
+            if _superseded_attempts >= 2:
+                return "stale"
+            return await ensure_entry_embedding(
+                current,
+                force=force,
+                _superseded_attempts=_superseded_attempts + 1,
+            )
+        error = f"{type(exc).__name__}: {str(exc)[:300]}"
+        _save_embedding_state(entry["id"], content_hash, "failed", error=error)
+        logger.warning(f"[Embedding] Deferred {entry['id']}: {error}")
+        return "failed"
+
+
+def embedding_state(entry: dict) -> str:
+    """Return ready, missing, stale, or failed for the active provider/model."""
+    row = _embedding_row(entry["id"])
+    if not row:
+        return "missing"
+    if row[2] != embedding_provider.dimensions or row[3] != embedding_content_hash(entry):
+        return "stale"
+    if row[5] != "ready" or not row[4]:
+        return "failed"
+    return "ready"
+
+
+def load_embedding_vectors(entry_ids: set[str]) -> dict[str, list[float]]:
+    """Load ready vectors for a candidate set; malformed rows are ignored."""
+    if not entry_ids:
+        return {}
+    init_ingest_log()
+    conn = sqlite3.connect(str(INGEST_LOG_DB))
+    placeholders = ",".join("?" for _ in entry_ids)
+    rows = conn.execute(
+        f"SELECT entry_id, vector_json FROM memory_embeddings "
+        f"WHERE status = 'ready' AND provider = ? AND model = ? AND dimensions = ? "
+        f"AND entry_id IN ({placeholders})",
+        (
+            embedding_provider.name,
+            embedding_provider.model,
+            embedding_provider.dimensions,
+            *tuple(entry_ids),
+        ),
+    ).fetchall()
+    conn.close()
+    vectors = {}
+    for entry_id, raw in rows:
+        try:
+            vector = [float(value) for value in json.loads(raw)]
+            if vector:
+                vectors[entry_id] = vector
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+    return vectors
+
+
+def load_current_embedding_vectors(entries: list[dict]) -> dict[str, list[float]]:
+    """Load only vectors whose stored hash matches current canonical Markdown."""
+    if not entries:
+        return {}
+    entries_by_id = {entry["id"]: entry for entry in entries}
+    init_ingest_log()
+    conn = sqlite3.connect(str(INGEST_LOG_DB))
+    placeholders = ",".join("?" for _ in entries_by_id)
+    rows = conn.execute(
+        f"SELECT entry_id, content_hash, vector_json FROM memory_embeddings "
+        f"WHERE status = 'ready' AND provider = ? AND model = ? AND dimensions = ? "
+        f"AND entry_id IN ({placeholders})",
+        (
+            embedding_provider.name,
+            embedding_provider.model,
+            embedding_provider.dimensions,
+            *tuple(entries_by_id),
+        ),
+    ).fetchall()
+    conn.close()
+
+    vectors = {}
+    for entry_id, content_hash, raw in rows:
+        entry = entries_by_id[entry_id]
+        if content_hash != embedding_content_hash(entry):
+            continue
+        try:
+            vector = [float(value) for value in json.loads(raw)]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if (
+            len(vector) == embedding_provider.dimensions
+            and all(math.isfinite(value) for value in vector)
+        ):
+            vectors[entry_id] = vector
+    return vectors
+
+
+def embedding_stats() -> dict[str, int]:
+    init_ingest_log()
+    conn = sqlite3.connect(str(INGEST_LOG_DB))
+    counts = dict(conn.execute(
+        "SELECT status, COUNT(*) FROM memory_embeddings "
+        "WHERE provider = ? AND model = ? AND dimensions = ? GROUP BY status",
+        (
+            embedding_provider.name,
+            embedding_provider.model,
+            embedding_provider.dimensions,
+        ),
+    ).fetchall())
+    conn.close()
+    return {"ready": counts.get("ready", 0), "failed": counts.get("failed", 0)}
+
+
+def embedding_progress() -> dict:
+    """Inspect canonical memories, including rows absent from the derived DB."""
+    counts = {"ready": 0, "missing": 0, "stale": 0, "failed": 0}
+    for entry in load_vault_entries():
+        state = embedding_state(entry)
+        counts[state] = counts.get(state, 0) + 1
+    return {
+        **counts,
+        "total": sum(counts.values()),
+        "pending": counts["missing"] + counts["stale"] + counts["failed"],
+        **embedding_reconciliation,
+    }
+
+
+async def reconcile_embedding_batch(limit: int = 1) -> dict[str, int]:
+    """Repair a deliberately tiny resumable batch of derived vectors."""
+    outcomes = {"embedded": 0, "unchanged": 0, "failed": 0, "stale": 0}
+    if limit <= 0 or not embedding_provider.available:
+        return outcomes
+    candidates = [
+        entry for entry in load_vault_entries() if embedding_state(entry) != "ready"
+    ][:limit]
+    for entry in candidates:
+        outcome = await ensure_entry_embedding(entry)
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+    return outcomes
+
+
+async def embedding_reconciliation_worker() -> None:
+    """Non-blocking, rate-shaped upgrade repair; never delays service startup."""
+    session_limit = max(0, int(os.getenv("ORBIT_BACKGROUND_BACKFILL_LIMIT", "5")))
+    interval = max(5.0, float(os.getenv("ORBIT_BACKGROUND_BACKFILL_INTERVAL", "30")))
+    if not PRODUCT_MODE or session_limit == 0:
+        return
+    await asyncio.sleep(min(interval, 10.0))
+    embedding_reconciliation["running"] = True
+    try:
+        while embedding_reconciliation["processed_this_session"] < session_limit:
+            if not embedding_provider.available:
+                await verify_provider()
+                embedding_reconciliation["last_result"] = "provider unavailable"
+                await asyncio.sleep(interval)
+                continue
+            outcomes = await reconcile_embedding_batch(limit=1)
+            processed = sum(outcomes.values())
+            if not processed:
+                embedding_reconciliation["last_result"] = "current"
+                return
+            embedding_reconciliation["processed_this_session"] += processed
+            embedding_reconciliation["last_result"] = next(
+                (name for name, count in outcomes.items() if count), "idle"
+            )
+            await asyncio.sleep(interval)
+    finally:
+        embedding_reconciliation["running"] = False
+
+
+# ──────────────────────────────────────────────
+# Hybrid Recall
+# ──────────────────────────────────────────────
+
+_SEARCH_TOKEN = re.compile(r"[\w][\w'-]*", re.UNICODE)
+_SEARCH_STOPWORDS = {
+    "a", "about", "an", "and", "are", "as", "at", "be", "but", "by", "do",
+    "does", "for", "from", "had", "has", "have", "he", "her", "his", "how",
+    "i", "in", "is", "it", "its", "me", "my", "not", "of", "on", "or",
+    "our", "she", "so", "than", "that", "the", "their", "them", "they",
+    "this", "to", "was", "we", "were", "what", "when", "who", "why",
+    "will", "with", "would", "you", "your", "something", "thing", "tweet",
+    "article",
+}
+
+
+def _search_tokens(text: str) -> list[str]:
+    tokens = [token.lower() for token in _SEARCH_TOKEN.findall(text or "")]
+    useful = [token for token in tokens if token not in _SEARCH_STOPWORDS]
+    return useful or tokens
+
+
+def _field_token_coverage(query_tokens: list[str], text: str) -> tuple[float, list[str]]:
+    haystack = set(_search_tokens(text))
+    hits = [token for token in query_tokens if token in haystack]
+    return (len(set(hits)) / max(len(set(query_tokens)), 1), sorted(set(hits)))
+
+
+def lexical_relevance(entry: dict, query: str) -> tuple[float, list[str], list[str]]:
+    """Transparent field-weighted lexical score in the 0..1 range."""
+    needle = " ".join(query.lower().split())
+    tokens = _search_tokens(query)
+    fields = {
+        "user note": entry.get("user_note", ""),
+        "title": entry.get("title", ""),
+        "tags": " ".join(entry.get("tags") or []),
+        "author": f"{entry.get('author', '')} {entry.get('author_handle', '')}",
+        "summary": entry.get("summary") or "",
+        "insights": " ".join(entry.get("key_insights") or []),
+        "source": f"{entry.get('source_platform', '')} {entry.get('source_url', '')}",
+        "content": entry.get("content", ""),
+    }
+    weights = {
+        "user note": 0.78, "title": 0.62, "tags": 0.40, "author": 0.32, "summary": 0.34,
+        "insights": 0.28, "source": 0.20, "content": 0.30,
+    }
+    score = 0.0
+    reasons = []
+    matched_tokens = set()
+    for name, value in fields.items():
+        normalized = " ".join(value.lower().split())
+        coverage, hits = _field_token_coverage(tokens, value)
+        matched_tokens.update(hits)
+        contribution = weights[name] * coverage
+        if needle and needle in normalized:
+            contribution += 0.62 if name == "user note" else (0.55 if name == "title" else 0.24)
+            reasons.append(f"exact phrase in {name}")
+        elif coverage:
+            reasons.append(f"keywords in {name}: {', '.join(hits[:4])}")
+        score += contribution
+    return min(score, 1.0), reasons, sorted(matched_tokens)
+
+
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    if not left or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if not left_norm or not right_norm:
+        return 0.0
+    return max(-1.0, min(1.0, dot / (left_norm * right_norm)))
+
+
+def useful_excerpt(entry: dict, query_tokens: list[str], width: int = 280) -> str:
+    """Choose a cheap query-aware excerpt, falling back to summary/body start."""
+    content = " ".join((entry.get("content") or "").split())
+    lowered = content.lower()
+    positions = [lowered.find(token) for token in query_tokens if lowered.find(token) >= 0]
+    if positions:
+        start = max(0, min(positions) - width // 3)
+        if start:
+            start = content.find(" ", start) + 1
+        excerpt = content[start:start + width]
+        if start:
+            excerpt = "…" + excerpt
+        if start + width < len(content):
+            excerpt += "…"
+        return excerpt
+    fallback = " ".join((entry.get("summary") or content).split())
+    return fallback[:width] + ("…" if len(fallback) > width else "")
+
+
+async def hybrid_recall(entries: list[dict], query: str) -> list[dict]:
+    """Rank candidates with lexical evidence plus optional semantic similarity."""
+    query_vector = None
+    if embedding_provider.available:
+        try:
+            query_vector = await embedding_provider.embed_query(query)
+        except Exception as exc:
+            logger.warning(
+                f"[Recall] Semantic query unavailable; using lexical search: "
+                f"{type(exc).__name__}: {str(exc)[:160]}"
+            )
+
+    vectors = load_embedding_vectors({entry["id"] for entry in entries}) if query_vector else {}
+    query_tokens = _search_tokens(query)
+    ranked = []
+    for entry in entries:
+        lexical, reasons, matched_tokens = lexical_relevance(entry, query)
+        semantic = cosine_similarity(query_vector, vectors.get(entry["id"], [])) if query_vector else 0.0
+        semantic = max(0.0, semantic)
+        score = min(1.0, 0.72 * lexical + 0.42 * semantic)
+        if score <= 0:
+            continue
+        if semantic >= 0.55 and not reasons:
+            reasons.append("meaning is similar to the query")
+        elif semantic >= 0.55:
+            reasons.append("semantic similarity reinforces the text match")
+
+        result = dict(entry)
+        result["excerpt"] = useful_excerpt(entry, query_tokens)
+        result["relevance"] = {
+            "score": round(score, 4),
+            "lexical": round(lexical, 4),
+            "semantic": round(semantic, 4) if query_vector else None,
+            "matched_terms": matched_tokens,
+            "reasons": reasons[:4],
+        }
+        ranked.append(result)
+
+    ranked.sort(
+        key=lambda item: (item["relevance"]["score"], item.get("captured_at", "")),
+        reverse=True,
+    )
+    return ranked
+
+
+# ──────────────────────────────────────────────
 # Auto-Linking
 # ──────────────────────────────────────────────
 #
 # Obsidian's graph view draws an edge for every [[wikilink]] between two
 # files. Without links, one-file-per-entry is graph-view input with nothing
-# to graph — a wall of disconnected dots. Real semantic linking (the Chroma
-# vector index) is a separate, larger piece of work; this is the cheap
-# version that ships now: entries sharing enrichment tags get linked to each
-# other. It degrades gracefully — an entry with no tags (not yet enriched)
-# simply has no links yet, and picks them up automatically once it is.
+# to graph — a wall of disconnected dots. These tag links are an Obsidian
+# convenience, not the canonical relationship store. Runtime Related below
+# uses rebuildable local embeddings and never materializes semantic edges in
+# Markdown. Tag linking still degrades gracefully: an entry with no tags
+# simply has no wikilinks yet and can pick them up after enrichment.
 #
 # Only one direction needs writing. Obsidian's own backlinks panel surfaces
 # the reverse automatically for any note that's linked TO, and the graph
@@ -1018,6 +1505,18 @@ def load_vault_entries() -> list[dict]:
 
 MAX_RELATED = 5
 MIN_SHARED_TAGS = 1
+SEMANTIC_RELATED_DEFAULT_LIMIT = 3
+SEMANTIC_RELATED_MAX_LIMIT = 5
+SEMANTIC_RELATED_MIN_SIMILARITY = 0.72
+SEMANTIC_RELATED_TAG_BOOST = 0.03
+SEMANTIC_RELATED_MAX_TAG_BOOST = 0.06
+RESURFACE_DEFAULT_LIMIT = 3
+RESURFACE_MAX_LIMIT = 3
+RESURFACE_MIN_SIMILARITY = 0.84
+RESURFACE_MAX_LEXICAL_BOOST = 0.04
+RESURFACE_CACHE_TTL_SECONDS = 30 * 60
+RESURFACE_FAILURE_CACHE_TTL_SECONDS = 5 * 60
+RESURFACE_CACHE_MAX_ENTRIES = 128
 
 # format_bookmark_entry() always emits Related, if present, as the last
 # section — so rewriting it is just "cut everything from this marker
@@ -1048,6 +1547,294 @@ def find_related(tags: list[str], exclude_id: str, entries: list[dict] = None) -
 
     scored.sort(key=lambda t: -t[0])
     return [(stem, title) for _, stem, title in scored[:MAX_RELATED]]
+
+
+def _shared_tags(left: dict, right: dict) -> list[str]:
+    left_tags = {tag.lower(): tag for tag in left.get("tags") or []}
+    right_tags = {tag.lower() for tag in right.get("tags") or []}
+    return sorted(left_tags[tag] for tag in left_tags.keys() & right_tags)
+
+
+def _is_obvious_duplicate(source: dict, candidate: dict) -> bool:
+    source_url = normalize_url(source.get("source_url", ""))
+    candidate_url = normalize_url(candidate.get("source_url", ""))
+    if source_url and source_url == candidate_url:
+        return True
+
+    source_title = " ".join((source.get("title") or "").lower().split())
+    candidate_title = " ".join((candidate.get("title") or "").lower().split())
+    source_content = " ".join((source.get("content") or "").lower().split())
+    candidate_content = " ".join((candidate.get("content") or "").lower().split())
+    return bool(
+        source_title
+        and source_content
+        and source_title == candidate_title
+        and source_content == candidate_content
+    )
+
+
+def related_memories(
+    entries: list[dict], entry_id: str, limit: int = SEMANTIC_RELATED_DEFAULT_LIMIT
+) -> list[dict]:
+    """Return a small, high-confidence semantic neighborhood for one memory."""
+    source = next((entry for entry in entries if entry["id"] == entry_id), None)
+    if source is None:
+        return []
+
+    limit = max(1, min(limit, SEMANTIC_RELATED_MAX_LIMIT))
+    candidates = [
+        entry
+        for entry in entries
+        if entry["id"] != entry_id and not _is_obvious_duplicate(source, entry)
+    ]
+    current_vectors = load_current_embedding_vectors([source, *candidates])
+    source_vector = current_vectors.get(entry_id)
+
+    ranked = []
+    candidates_without_vectors = []
+    for candidate in candidates:
+        candidate_vector = current_vectors.get(candidate["id"])
+        if not source_vector or not candidate_vector:
+            candidates_without_vectors.append(candidate)
+            continue
+
+        semantic = max(0.0, cosine_similarity(source_vector, candidate_vector))
+        if semantic < SEMANTIC_RELATED_MIN_SIMILARITY:
+            continue
+        shared_tags = _shared_tags(source, candidate)
+        tag_boost = min(
+            len(shared_tags) * SEMANTIC_RELATED_TAG_BOOST,
+            SEMANTIC_RELATED_MAX_TAG_BOOST,
+        )
+        ranked.append((semantic + tag_boost, semantic, candidate, shared_tags, tag_boost))
+
+    ranked.sort(
+        key=lambda item: (item[0], item[1], item[2].get("captured_at", "")),
+        reverse=True,
+    )
+    results = []
+    used_ids = set()
+    for score, semantic, candidate, shared_tags, tag_boost in ranked[:limit]:
+        result = dict(candidate)
+        result["excerpt"] = useful_excerpt(candidate, [], width=180)
+        result["relationship"] = {
+            "method": "semantic",
+            "score": round(min(score, 1.0), 4),
+            "semantic": round(semantic, 4),
+            "tag_boost": round(tag_boost, 4),
+            "shared_tags": shared_tags,
+            "minimum_semantic": SEMANTIC_RELATED_MIN_SIMILARITY,
+        }
+        result.pop("content", None)
+        results.append(result)
+        used_ids.add(candidate["id"])
+
+    # No provider call is needed here. When a current vector is absent, reuse
+    # the established tag relationship for only that gap. A candidate with a
+    # current but weak vector is deliberately not rescued by tags.
+    if len(results) < limit:
+        fallback_pool = candidates if not source_vector else candidates_without_vectors
+        fallback = []
+        for candidate in fallback_pool:
+            if candidate["id"] in used_ids:
+                continue
+            shared_tags = _shared_tags(source, candidate)
+            if len(shared_tags) < MIN_SHARED_TAGS:
+                continue
+            fallback.append((len(shared_tags), candidate, shared_tags))
+        fallback.sort(
+            key=lambda item: (item[0], item[1].get("captured_at", "")), reverse=True
+        )
+        for _, candidate, shared_tags in fallback[: limit - len(results)]:
+            result = dict(candidate)
+            result["excerpt"] = useful_excerpt(candidate, [], width=180)
+            result["relationship"] = {
+                "method": "tag_fallback",
+                "score": None,
+                "semantic": None,
+                "tag_boost": None,
+                "shared_tags": shared_tags,
+                "minimum_semantic": SEMANTIC_RELATED_MIN_SIMILARITY,
+            }
+            result.pop("content", None)
+            results.append(result)
+
+    return results
+
+
+def canonical_page_context(page: PageContext) -> str:
+    """The bounded, temporary text sent to the query-embedding provider."""
+    try:
+        domain = urlsplit(page.url).hostname or ""
+    except ValueError:
+        domain = ""
+    return "\n".join(
+        (
+            f"Title: {' '.join(page.title.split())}",
+            f"Domain: {domain}",
+            f"Description: {' '.join(page.description.split())}",
+            f"Visible page text: {' '.join(page.text.split())}",
+        )
+    ).strip()
+
+
+def _contextual_lexical_evidence(page: PageContext, entry: dict) -> tuple[float, list[str]]:
+    page_heading = f"{page.title} {page.description}"
+    page_tokens = set(_search_tokens(page_heading))
+    memory_fields = {
+        "personal thought": entry.get("user_note", ""),
+        "title": entry.get("title", ""),
+        "tags": " ".join(entry.get("tags") or []),
+    }
+    matched = set()
+    for value in memory_fields.values():
+        matched.update(page_tokens & set(_search_tokens(value)))
+    if len(matched) < 2:
+        return 0.0, []
+    return min(len(matched) * 0.01, RESURFACE_MAX_LEXICAL_BOOST), sorted(matched)
+
+
+def _strict_contextual_lexical_matches(
+    page: PageContext, entries: list[dict], limit: int
+) -> list[dict]:
+    """Provider-free fallback limited to long exact title/note phrases."""
+    haystack = " ".join(
+        f"{page.title} {page.description} {page.text}".lower().split()
+    )
+    matches = []
+    for entry in entries:
+        if normalize_url(page.url) == normalize_url(entry.get("source_url", "")):
+            continue
+        evidence = []
+        title = " ".join((entry.get("title") or "").lower().split())
+        note = " ".join((entry.get("user_note") or "").lower().split())
+        if len(title) >= 20 and title in haystack:
+            evidence.append("exact memory title on page")
+        if len(note) >= 20 and note in haystack:
+            evidence.append("exact personal thought on page")
+        if evidence:
+            matches.append((len(evidence), entry, evidence))
+    matches.sort(
+        key=lambda item: (item[0], item[1].get("captured_at", "")), reverse=True
+    )
+    return [
+        _contextual_result(entry, "exact_lexical", None, 0.0, [], evidence)
+        for _, entry, evidence in matches[:limit]
+    ]
+
+
+def _contextual_result(
+    entry: dict,
+    method: str,
+    semantic: Optional[float],
+    lexical_boost: float,
+    matched_terms: list[str],
+    reasons: list[str],
+) -> dict:
+    result = dict(entry)
+    result["excerpt"] = useful_excerpt(entry, [], width=180)
+    result["context_match"] = {
+        "method": method,
+        "semantic": round(semantic, 4) if semantic is not None else None,
+        "lexical_boost": round(lexical_boost, 4),
+        "score": round(min((semantic or 0.0) + lexical_boost, 1.0), 4),
+        "minimum_semantic": RESURFACE_MIN_SIMILARITY,
+        "matched_terms": matched_terms,
+        "reasons": reasons,
+    }
+    result.pop("content", None)
+    return result
+
+
+async def contextual_resurface(
+    page: PageContext, entries: list[dict], limit: int = RESURFACE_DEFAULT_LIMIT
+) -> dict:
+    """Match one ephemeral public-page context against durable memories."""
+    limit = max(1, min(limit, RESURFACE_MAX_LIMIT))
+    context = canonical_page_context(page)
+    cache_key = hashlib.sha256(
+        (
+            f"{embedding_provider.name}\n{embedding_provider.model}\n"
+            f"{embedding_provider.dimensions}\n{context}"
+        ).encode("utf-8")
+    ).hexdigest()
+    now = time.monotonic()
+    cached = resurface_cache.get(cache_key)
+    if cached:
+        age = now - cached[0]
+        ttl = (
+            RESURFACE_CACHE_TTL_SECONDS
+            if cached[1].get("embedding_available")
+            else RESURFACE_FAILURE_CACHE_TTL_SECONDS
+        )
+        if age < ttl:
+            return dict(cached[1], cached=True)
+        resurface_cache.pop(cache_key, None)
+
+    page_url = normalize_url(page.url)
+    candidates = [
+        entry
+        for entry in entries
+        if not page_url or normalize_url(entry.get("source_url", "")) != page_url
+    ]
+    results = []
+    embedding_available = embedding_provider.available
+    if embedding_available and context:
+        try:
+            query_vector = await embedding_provider.embed_query(context)
+            vectors = load_current_embedding_vectors(candidates)
+            ranked = []
+            for entry in candidates:
+                vector = vectors.get(entry["id"])
+                if not vector:
+                    continue
+                semantic = max(0.0, cosine_similarity(query_vector, vector))
+                if semantic < RESURFACE_MIN_SIMILARITY:
+                    continue
+                lexical_boost, matched_terms = _contextual_lexical_evidence(page, entry)
+                ranked.append(
+                    (semantic + lexical_boost, semantic, entry, lexical_boost, matched_terms)
+                )
+            ranked.sort(
+                key=lambda item: (item[0], item[1], item[2].get("captured_at", "")),
+                reverse=True,
+            )
+            seen_urls = set()
+            for _, semantic, entry, lexical_boost, matched_terms in ranked:
+                identity = normalize_url(entry.get("source_url", "")) or entry["id"]
+                if identity in seen_urls:
+                    continue
+                seen_urls.add(identity)
+                results.append(
+                    _contextual_result(
+                        entry,
+                        "semantic",
+                        semantic,
+                        lexical_boost,
+                        matched_terms,
+                        ["strong semantic match"],
+                    )
+                )
+                if len(results) >= limit:
+                    break
+        except Exception:
+            embedding_available = False
+
+    if not results and not embedding_available:
+        results = _strict_contextual_lexical_matches(page, candidates, limit)
+
+    response = {
+        "count": len(results),
+        "entries": results,
+        "embedding_available": embedding_available,
+        "cached": False,
+        "context_persisted": False,
+    }
+    resurface_cache[cache_key] = (now, response)
+    if len(resurface_cache) > RESURFACE_CACHE_MAX_ENTRIES:
+        oldest = min(resurface_cache, key=lambda key: resurface_cache[key][0])
+        resurface_cache.pop(oldest, None)
+    return response
 
 
 def render_related_section(related: list[tuple]) -> str:
@@ -1127,6 +1914,73 @@ async def write_entry_file(
     return path
 
 
+async def persist_user_note_to_markdown(
+    entry_id: str, user_note: str
+) -> Optional[dict]:
+    """Update only user_note; preserve every unrelated Markdown byte."""
+    async with vault_write_lock:
+        target = None
+        for path in iter_entry_files():
+            parsed = parse_entry_file(path)
+            if parsed and parsed["id"] == entry_id:
+                target = path
+                break
+        if target is None:
+            return None
+
+        text = target.read_text(encoding="utf-8")
+        fence = text.find("\n---\n", 4)
+        if fence == -1:
+            return None
+        try:
+            metadata = yaml.safe_load(text[4:fence]) or {}
+        except yaml.YAMLError:
+            return None
+        if not isinstance(metadata, dict):
+            return None
+
+        frontmatter = text[4:fence + 1]
+        note_line = yaml.safe_dump(
+            {"user_note": user_note or None},
+            sort_keys=False,
+            allow_unicode=True,
+            default_flow_style=False,
+            width=10_000,
+        ).rstrip("\n")
+        existing_note = re.search(r"(?m)^user_note\s*:", frontmatter)
+        if existing_note:
+            next_key = re.search(
+                r"(?m)^[A-Za-z_][A-Za-z0-9_-]*\s*:",
+                frontmatter[existing_note.end():],
+            )
+            end = (
+                existing_note.end() + next_key.start()
+                if next_key
+                else len(frontmatter)
+            )
+            updated_frontmatter = (
+                frontmatter[:existing_note.start()]
+                + note_line
+                + "\n"
+                + frontmatter[end:]
+            )
+        else:
+            insert_before = re.search(r"(?m)^tags\s*:", frontmatter)
+            position = insert_before.start() if insert_before else len(frontmatter)
+            updated_frontmatter = (
+                frontmatter[:position]
+                + note_line
+                + "\n"
+                + frontmatter[position:]
+            )
+
+        updated = f"---\n{updated_frontmatter}---\n{text[fence + 5:]}"
+        temporary = target.with_name(f".{target.name}.orbit-note.tmp")
+        temporary.write_text(updated, encoding="utf-8")
+        os.replace(temporary, target)
+        return parse_entry_file(target)
+
+
 # ──────────────────────────────────────────────
 # Background Worker
 # ──────────────────────────────────────────────
@@ -1139,6 +1993,12 @@ async def process_payload(payload: IngestPayload, entry_id: str) -> str:
     Returns the final status string. Raises on unrecoverable errors so the
     caller can retry or record a failure.
     """
+    # A note can arrive while this item is queued. SQLite bridges that brief
+    # gap; Markdown remains canonical once the capture is written.
+    pending_note = get_ingest_user_note(entry_id)
+    if pending_note is not None:
+        payload.user_note = pending_note
+
     # Trust the URL over the caller's declared type — see detect_type().
     payload.type = detect_type(payload.source_url, payload.type)
     payload.source_platform = detect_platform(payload.source_url) or payload.source_platform
@@ -1252,6 +2112,21 @@ async def process_payload(payload: IngestPayload, entry_id: str) -> str:
         f"[Worker] Saved to {target.relative_to(VAULT_DIR)} ({status}): "
         f"{payload.title or payload.source_url}"
     )
+
+    # Close the race where a note arrived after the pre-processing check but
+    # before the Markdown write completed.
+    latest_note = get_ingest_user_note(entry_id)
+    if latest_note is not None and latest_note != (payload.user_note or ""):
+        written_with_note = await persist_user_note_to_markdown(entry_id, latest_note)
+        if written_with_note:
+            payload.user_note = latest_note
+
+    # Markdown is the durable capture. Embedding is deliberately attempted
+    # only after that write succeeds, and ensure_entry_embedding contains its
+    # own failure handling, so a provider outage cannot reject the memory.
+    written_entry = parse_entry_file(target)
+    if written_entry:
+        await ensure_entry_embedding(written_entry)
     return status
 
 
@@ -1271,13 +2146,17 @@ async def background_worker():
 
     while True:
         try:
-            payload: IngestPayload = await ingest_queue.get()
+            queued_item = await ingest_queue.get()
         except asyncio.CancelledError:
             raise
 
         try:
+            if isinstance(queued_item, tuple):
+                payload, entry_id = queued_item
+            else:  # compatibility for maintenance/tests that enqueue a payload directly
+                payload, entry_id = queued_item, str(uuid.uuid4())
             existing = find_existing_entry(payload.source_url)
-            if existing and existing[1] in ("enriched", "ingested"):
+            if existing and existing[0] != entry_id and existing[1] in ("enriched", "ingested"):
                 logger.info(
                     f"[Worker] Skipping duplicate ({existing[1]}): {payload.source_url}"
                 )
@@ -1288,7 +2167,6 @@ async def background_worker():
             # for everything). process_payload re-derives it idempotently.
             payload.type = detect_type(payload.source_url, payload.type)
 
-            entry_id = str(uuid.uuid4())
             logger.info(f"[Worker] Processing: {payload.source_url} (id={entry_id})")
             log_ingest_entry(entry_id, payload.source_url, payload.type, "processing")
 
@@ -1315,6 +2193,9 @@ async def background_worker():
 
                     # Out of attempts — save a stub so the URL isn't lost.
                     try:
+                        pending_note = get_ingest_user_note(entry_id)
+                        if pending_note is not None:
+                            payload.user_note = pending_note
                         await write_entry_file(
                             payload=payload, entry_id=entry_id, status="failed"
                         )
@@ -1340,31 +2221,155 @@ async def background_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Initializes SQLite log, verifies Gemini credentials, and spawns the
+    Initializes SQLite, checks the active provider, and spawns the
     background worker on startup. The worker runs until shutdown, when it's
     cancelled cleanly.
     """
     init_ingest_log()
-    await verify_gemini_credentials()
+    provider_task = asyncio.create_task(verify_provider())
     worker_task = asyncio.create_task(background_worker())
+    reconciliation_task = asyncio.create_task(embedding_reconciliation_worker())
     logger.info("[Server] Orbit V2 ingestion server started.")
 
     yield
 
-    worker_task.cancel()
-    try:
-        await worker_task
-    except asyncio.CancelledError:
-        pass
+    for task in (worker_task, reconciliation_task, provider_task):
+        task.cancel()
+    for task in (worker_task, reconciliation_task, provider_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     logger.info("[Server] Orbit V2 ingestion server stopped.")
 
 
-app = FastAPI(title="Orbit Ingestion Server", version="2.1.0", lifespan=lifespan)
+app = FastAPI(title="Orbit Ingestion Server", version="0.1.0", lifespan=lifespan)
 
 
 # ──────────────────────────────────────────────
 # API Endpoints
 # ──────────────────────────────────────────────
+
+
+def onboarding_assets_dir() -> Path:
+    bundled_root = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return bundled_root / "onboarding"
+
+
+def require_local_setup_origin(request: Request) -> None:
+    origin = request.headers.get("origin", "")
+    allowed = {"http://localhost:8000", "http://127.0.0.1:8000"}
+    if origin and origin not in allowed:
+        raise HTTPException(status_code=403, detail="Local Orbit setup only")
+
+
+@app.get("/orbit", include_in_schema=False)
+async def orbit_home():
+    return FileResponse(onboarding_assets_dir() / "index.html")
+
+
+@app.get("/orbit/{asset_name}", include_in_schema=False)
+async def orbit_asset(asset_name: str):
+    if asset_name not in {"app.js", "style.css"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(onboarding_assets_dir() / asset_name)
+
+
+@app.get("/orbit-api/setup")
+async def setup_status():
+    await verify_provider()
+    config = load_config()
+    progress = embedding_progress()
+    return {
+        "setup_complete": config.setup_complete,
+        "vault_path": str(VAULT_DIR if PRODUCT_MODE else config.resolved_vault_path),
+        "provider": intelligence_provider.name,
+        "provider_has_key": bool(GEMINI_API_KEY or (config.provider == "gemini" and load_gemini_key())),
+        "provider_available": bool(provider_health.get("runtime_available")),
+        "provider_health": provider_health,
+        "service": "running",
+        "semantic_memory": progress,
+        "resurfacing": "off by default; managed in the Chrome extension",
+        "log_path": str(Path.home() / "Library" / "Logs" / "Orbit" / "orbit.log"),
+    }
+
+
+@app.post("/orbit-api/choose-folder")
+async def choose_storage_folder(request: Request):
+    require_local_setup_origin(request)
+    if sys.platform != "darwin":
+        raise HTTPException(status_code=501, detail="Folder picker is currently available on macOS")
+    script = 'POSIX path of (choose folder with prompt "Choose where your Orbit memories live")'
+    result = await asyncio.to_thread(
+        subprocess.run,
+        ["/usr/bin/osascript", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        return {"cancelled": True}
+    return {"cancelled": False, "vault_path": result.stdout.strip().rstrip("/")}
+
+
+@app.get("/orbit-api/ollama-status")
+async def ollama_setup_status():
+    """Check the supported local runtime without changing active settings."""
+    candidate = OllamaProvider(
+        base_url=os.getenv("ORBIT_OLLAMA_URL", "http://127.0.0.1:11434"),
+        embedding_model=os.getenv("ORBIT_OLLAMA_EMBEDDING_MODEL", "embeddinggemma"),
+        enrichment_model=os.getenv("ORBIT_OLLAMA_ENRICHMENT_MODEL", "qwen3:1.7b"),
+        dimensions=OLLAMA_EMBEDDING_DIMENSIONS,
+    )
+    try:
+        return await candidate.check_health()
+    finally:
+        await candidate.aclose()
+
+
+@app.post("/orbit-api/setup")
+async def save_setup(update: SetupUpdate, request: Request):
+    require_local_setup_origin(request)
+    vault_path = Path(update.vault_path).expanduser()
+    if not vault_path.is_absolute():
+        raise HTTPException(status_code=400, detail="Choose an absolute storage location")
+    try:
+        vault_path.mkdir(parents=True, exist_ok=True)
+        if not vault_path.is_dir():
+            raise OSError("not a folder")
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Orbit cannot use that folder: {exc}") from exc
+
+    # Public v0.1 is Ollama/No AI only. Preserve any legacy Gemini key just
+    # like existing provider-specific vectors; it remains inactive.
+    api_key = ""
+
+    config = OrbitConfig(
+        setup_complete=True,
+        vault_path=str(vault_path.resolve()),
+        provider=update.provider,
+    )
+    save_config(config)
+    configure_runtime(config.resolved_vault_path, config.provider, api_key)
+    await verify_provider()
+    return {
+        "status": "saved",
+        "provider_available": bool(provider_health.get("runtime_available")),
+        "provider_health": provider_health,
+        "vault_path": str(VAULT_DIR),
+        "message": (
+            "Orbit is ready. Your intelligence provider is connected."
+            if provider_health.get("embedding_ready") and provider_health.get("enrichment_ready")
+            else "Orbit is ready. Capture and exact Recall work without semantic memory."
+        ),
+    }
+
+
+@app.post("/orbit-api/stop")
+async def stop_orbit(request: Request, background_tasks: BackgroundTasks):
+    require_local_setup_origin(request)
+    background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
+    return {"status": "stopping"}
 
 
 @app.post("/ingest", status_code=202)
@@ -1376,13 +2381,29 @@ async def ingest(payload: IngestPayload):
     or video download. Processing happens in the background worker.
     """
     existing = find_existing_entry(payload.source_url)
-    if existing and existing[1] in ("enriched", "ingested"):
+    if existing and existing[1] in ("queued", "processing", "retrying", "enriched", "ingested"):
         logger.info(f"[API] Duplicate, not queued: {payload.source_url}")
-        return {"status": "duplicate", "existing_id": existing[0], "queue_size": ingest_queue.qsize()}
+        existing_memory = next(
+            (entry for entry in load_vault_entries() if entry["id"] == existing[0]),
+            None,
+        )
+        return {
+            "status": "duplicate",
+            "existing_id": existing[0],
+            "user_note": (
+                (existing_memory or {}).get("user_note", "")
+                or get_ingest_user_note(existing[0])
+                or ""
+            ),
+            "queue_size": ingest_queue.qsize(),
+        }
 
-    await ingest_queue.put(payload)
+    entry_id = str(uuid.uuid4())
+    payload.type = detect_type(payload.source_url, payload.type)
+    log_ingest_entry(entry_id, payload.source_url, payload.type, "queued")
+    await ingest_queue.put((payload, entry_id))
     logger.info(f"[API] Queued: {payload.source_url} (queue size: {ingest_queue.qsize()})")
-    return {"status": "accepted", "queue_size": ingest_queue.qsize()}
+    return {"status": "accepted", "entry_id": entry_id, "queue_size": ingest_queue.qsize()}
 
 
 @app.get("/health")
@@ -1395,8 +2416,17 @@ async def health():
     }
     return {
         "status": "healthy",
+        "service": "orbit",
+        "version": app.version,
         "queue_size": ingest_queue.qsize(),
         "gemini_available": gemini_available,
+        "provider_configured": intelligence_provider.name != "none",
+        "intelligence_provider": intelligence_provider.name,
+        "provider_health": provider_health,
+        "embedding_provider": embedding_provider.name,
+        "embedding_model": embedding_provider.model,
+        "embedding_available": embedding_provider.available,
+        "embeddings": embedding_progress(),
         "video_download_enabled": DOWNLOAD_VIDEOS,
         "vault_dir": str(VAULT_DIR),
         "entry_counts": entry_counts,
@@ -1444,7 +2474,12 @@ async def stats():
     total = cursor.execute("SELECT COUNT(*) FROM ingest_log").fetchone()[0]
     conn.close()
 
-    return {"total": total, "by_status": by_status, "by_type": by_type}
+    return {
+        "total": total,
+        "by_status": by_status,
+        "by_type": by_type,
+        "embeddings": embedding_stats(),
+    }
 
 
 @app.get("/entries")
@@ -1473,21 +2508,46 @@ async def list_entries(
         wanted = tag.lower()
         entries = [e for e in entries if wanted in (t.lower() for t in e["tags"])]
     if q:
-        needle = q.lower()
-        entries = [
-            e for e in entries
-            if needle in e["title"].lower() or needle in e["content"].lower()
-        ]
-
-    entries.sort(key=lambda e: e["captured_at"], reverse=True)
+        entries = await hybrid_recall(entries, q)
+    else:
+        entries.sort(key=lambda e: e["captured_at"], reverse=True)
     total = len(entries)
     page = entries[offset: offset + limit]
 
     for e in page:
-        e["excerpt"] = e["content"][:280]
+        if "excerpt" not in e:
+            e["excerpt"] = useful_excerpt(e, [])
         del e["content"]
 
     return {"total": total, "count": len(page), "entries": page}
+
+
+@app.get("/search")
+async def search_entries(
+    q: str,
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    tag: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+):
+    """Explicit Recall endpoint; `/entries?q=...` uses the same ranking."""
+    result = await list_entries(
+        type=type,
+        status=status,
+        tag=tag,
+        q=q,
+        limit=limit,
+        offset=offset,
+    )
+    result["query"] = q
+    return result
+
+
+@app.post("/resurface")
+async def resurface_page(page: PageContext, limit: int = RESURFACE_DEFAULT_LIMIT):
+    """Match temporary page context without saving it as browsing history."""
+    return await contextual_resurface(page, load_vault_entries(), limit=limit)
 
 
 @app.get("/entries/{entry_id}")
@@ -1497,3 +2557,59 @@ async def get_entry(entry_id: str):
         if entry["id"] == entry_id:
             return entry
     raise HTTPException(status_code=404, detail="Entry not found")
+
+
+@app.get("/entries/{entry_id}/related")
+async def get_related_entries(
+    entry_id: str, limit: int = SEMANTIC_RELATED_DEFAULT_LIMIT
+):
+    """Return derived semantic neighbors with safe shared-tag fallback."""
+    entries = load_vault_entries()
+    if not any(entry["id"] == entry_id for entry in entries):
+        raise HTTPException(status_code=404, detail="Entry not found")
+    related = related_memories(entries, entry_id, limit=limit)
+    return {
+        "entry_id": entry_id,
+        "count": len(related),
+        "entries": related,
+    }
+
+
+@app.patch("/entries/{entry_id}/note")
+async def update_entry_note(
+    entry_id: str, update: UserNoteUpdate, background_tasks: BackgroundTasks
+):
+    """Durably set or clear the user's own note without changing memory content."""
+    note = " ".join(update.user_note.split()).strip()
+    if not set_ingest_user_note(entry_id, note):
+        existing = next(
+            (entry for entry in load_vault_entries() if entry["id"] == entry_id),
+            None,
+        )
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        # A hand-copied/legacy Markdown memory may not yet have an ingest row.
+        log_ingest_entry(
+            entry_id,
+            existing["source_url"],
+            existing["type"],
+            existing["status"],
+        )
+        set_ingest_user_note(entry_id, note)
+
+    entry = await persist_user_note_to_markdown(entry_id, note)
+    if entry is None:
+        # The capture is still queued/processing. The worker reads this value
+        # after its durable Markdown write and applies it before embedding.
+        return {"status": "pending", "entry_id": entry_id, "user_note": note}
+
+    # The note is already durable and lexically searchable. Refreshing its
+    # derived vector happens after the HTTP response so the UI never waits on
+    # an embedding provider; a stopped task remains detectable as stale.
+    background_tasks.add_task(ensure_entry_embedding, entry)
+    return {
+        "status": "saved",
+        "entry_id": entry_id,
+        "user_note": note,
+        "embedding": "scheduled",
+    }
