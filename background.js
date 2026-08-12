@@ -123,6 +123,7 @@ async function sendToServer(payload) {
 
       if (response.ok) {
         console.log("[Orbit] Ingested successfully:", payload.source_url);
+        await flashBadge("ok");
         return;
       }
     } catch (err) {
@@ -140,6 +141,29 @@ async function sendToServer(payload) {
   // All retries exhausted — queue for offline retry
   console.warn("[Orbit] Server unreachable. Queuing payload locally.");
   await queuePayload(payload);
+  await showQueuedBadge();
+}
+
+// ──────────────────────────────────────────────
+// 5b. BADGE — the only capture feedback the user gets
+// ──────────────────────────────────────────────
+// Without this, a capture that fails because the server isn't running is
+// indistinguishable from one that worked: both are silent. A brief check on
+// success, and a persistent count of unsent captures on failure.
+
+async function flashBadge(kind) {
+  const { queue = [] } = await chrome.storage.local.get("queue");
+  if (queue.length) return; // don't stomp a pending-queue badge with a checkmark
+
+  await chrome.action.setBadgeBackgroundColor({ color: "#34d8b0" });
+  await chrome.action.setBadgeText({ text: "✓" });
+  setTimeout(() => chrome.action.setBadgeText({ text: "" }), 2000);
+}
+
+async function showQueuedBadge() {
+  const { queue = [] } = await chrome.storage.local.get("queue");
+  await chrome.action.setBadgeBackgroundColor({ color: "#ff6b6b" });
+  await chrome.action.setBadgeText({ text: queue.length ? String(queue.length) : "" });
 }
 
 // ──────────────────────────────────────────────
@@ -184,6 +208,7 @@ async function restoreOfflineQueue() {
 
   await chrome.storage.local.set({ queue: stillQueued });
   console.log(`[Orbit] Queue remaining: ${stillQueued.length}`);
+  await showQueuedBadge();
 }
 
 // ──────────────────────────────────────────────

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Orbit",
-  "version": "2.0.1",
-  "description": "Frictionless knowledge capture via fetch interception. Bookmark on X, right-click anywhere, and it lands in your local vault.",
+  "version": "2.1.0",
+  "description": "Frictionless knowledge capture. Bookmark on X, right-click anywhere, and it lands in your local Obsidian vault.",
   "permissions": [
     "storage",
     "contextMenus"
@@ -14,6 +14,12 @@
     "*://twitter.com/*",
     "http://localhost:8000/*"
   ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
@@ -46,6 +52,13 @@
     }
   ],
   "action": {
-    "default_title": "Orbit"
+    "default_title": "Orbit",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   }
 }
