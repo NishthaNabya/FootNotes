@@ -52,9 +52,26 @@ VIDEO_MODEL = "gemini-2.5-pro"
 # ──────────────────────────────────────────────
 
 VAULT_DIR = Path(__file__).parent / "vault"
-BOOKMARKS_FILE = VAULT_DIR / "bookmarks.md"
-TRANSCRIPTS_FILE = VAULT_DIR / "transcripts.md"
 INGEST_LOG_DB = VAULT_DIR / "ingest.log"
+
+# One markdown file per entry, grouped by type into subfolders. This is the
+# Obsidian-compatible layout: Obsidian's graph view draws an edge for every
+# [[wikilink]] between two FILES, so two giant append-only files (the old
+# bookmarks.md / transcripts.md) rendered as two disconnected dots no matter
+# how much content they held. See rebuild_related_links() below for how
+# entries actually get linked to each other.
+TYPE_FOLDERS = {
+    "tweet": "tweets",
+    "thread": "tweets",
+    "youtube": "youtube",
+    "article": "articles",
+    "podcast": "articles",  # no extraction path produces this yet; safe fallback
+}
+
+# Pre-migration paths. Nothing in the live pipeline writes here anymore;
+# these exist only so migrate_to_obsidian.py can find the old files once.
+LEGACY_BOOKMARKS_FILE = VAULT_DIR / "bookmarks.md"
+LEGACY_TRANSCRIPTS_FILE = VAULT_DIR / "transcripts.md"
 
 MAX_WORKER_CONCURRENCY = 3
 MAX_ATTEMPTS = 3
@@ -114,9 +131,12 @@ class EnrichmentResult(BaseModel):
 # Async queue for non-blocking ingestion
 ingest_queue: asyncio.Queue = asyncio.Queue()
 
-# File locks for safe concurrent appends
-file_lock = asyncio.Lock()
-transcript_lock = asyncio.Lock()
+# Serializes vault writes. Each entry gets its own uniquely-named file, so
+# this isn't preventing two writers from colliding on one file (that can't
+# happen); it's cheap insurance around find_related()'s vault-wide scan in
+# write_entry_file(), in case a maintenance script ever runs concurrently
+# with the live server.
+vault_write_lock = asyncio.Lock()
 
 # LLM concurrency semaphore — caps simultaneous Gemini calls
 llm_semaphore = asyncio.Semaphore(MAX_WORKER_CONCURRENCY)
@@ -294,14 +314,18 @@ def format_bookmark_entry(
     key_insights: list = None,
     status: str = "ingested",
     content_header: str = "Content",
+    related: list = None,
 ) -> str:
     """
-    Render a bookmark entry with YAML frontmatter and Markdown body.
+    Render one entry — YAML frontmatter, body, and (if any) a trailing
+    Related section — as the complete contents of its own file.
 
     Frontmatter is serialized by PyYAML rather than f-string interpolation.
     Hand-rolled quoting broke on any title containing a backslash, a leading
     '@', or an embedded quote — and those failures were silent, producing a
     file that only revealed itself as corrupt when something tried to parse it.
+
+    `related` must be the last thing in the file — see strip_related_section().
     """
     frontmatter = {
         "id": entry_id,
@@ -334,8 +358,8 @@ def format_bookmark_entry(
         "## Context\n\n"
         f"- **Original URL:** {payload.source_url}\n"
         f"- **Captured:** {payload.captured_at}\n"
-        f"- **Platform:** {payload.source_platform}\n\n"
-        "---\n\n"
+        f"- **Platform:** {payload.source_platform}"
+        f"{render_related_section(related or [])}\n"
     )
 
 
@@ -359,6 +383,35 @@ PLACEHOLDER_PREFIXES = (
 def is_placeholder_content(content: str) -> bool:
     """True when the body is our own 'nothing found' marker rather than content."""
     return content.strip().startswith(PLACEHOLDER_PREFIXES)
+
+
+# ──────────────────────────────────────────────
+# File Naming
+# ──────────────────────────────────────────────
+
+
+def slugify(text: str, max_len: int = 60) -> str:
+    """Turn arbitrary text into a filesystem- and Obsidian-safe slug."""
+    text = re.sub(r"[^\w\s-]", "", text.lower())
+    text = re.sub(r"[\s_-]+", "-", text).strip("-")
+    return text[:max_len].rstrip("-") or "untitled"
+
+
+def entry_path(payload: IngestPayload, entry_id: str) -> Path:
+    """
+    Compute the on-disk path for a new entry: vault/<type-folder>/<slug>-<id8>.md.
+
+    The id suffix guarantees uniqueness even when two captures produce the
+    same slug (e.g. two tweets with the same first line); it's the first 8
+    hex characters of the full UUID kept in frontmatter, not a new identity.
+    """
+    base = slugify(payload.title) if payload.title.strip() else slugify(
+        urlsplit(payload.source_url).netloc or payload.source_url
+    )
+    folder_name = TYPE_FOLDERS.get(payload.type, "articles")
+    folder = VAULT_DIR / folder_name
+    folder.mkdir(exist_ok=True)
+    return folder / f"{base}-{entry_id[:8]}.md"
 
 
 # ──────────────────────────────────────────────
@@ -854,23 +907,18 @@ def _empty_enrichment(ok: bool = False, reason: str = "") -> dict:
 # Vault Reading
 # ──────────────────────────────────────────────
 #
-# The write path has always existed; there was never a read path. Every
-# frontend option (Obsidian, a custom website, a future chat interface) needs
-# entries back out as structured data rather than raw markdown, so this is the
-# one piece worth building before deciding between them.
+# One file per entry means one entry per file — the parser here is simpler
+# than the old multi-entry-per-file version it replaced, since there's no
+# longer a need to find where one entry ends and the next begins.
 #
-# backfill.py has its own copy of this same parser, with extra fallback
+# backfill.py has its own copy of this parsing shape, with extra fallback
 # branches for repairing malformed frontmatter. That duplication is
-# deliberate for now — this path serves live reads and should stay simple and
-# fast; backfill's is a maintenance script that runs rarely and needs to be
+# deliberate — this path serves live reads and should stay simple and fast;
+# backfill's is a maintenance script that runs rarely and needs to be
 # tolerant of exactly the damage this one has no reason to expect.
 
-# Entry starts: a frontmatter fence immediately followed by an id field.
-# Entry separators ('---' between entries) and horizontal rules inside tweet
-# content can't match this, because they aren't followed by `id:`.
-_ENTRY_START = re.compile(r"^---\n(?=id:)", re.M)
-
-# Body content sits between the content header and the Context footer.
+# Body content sits between the content header and the Context footer. Must
+# not match "## Related", which — when present — comes after Context.
 _CONTENT_BLOCK = re.compile(
     r"^## (?:Content|Transcript)\n\n(.*?)\n\n## Context\n", re.S | re.M
 )
@@ -885,69 +933,161 @@ def _coerce_list(value) -> list:
     return [str(v) for v in value if v] if isinstance(value, list) else []
 
 
-def parse_vault_file(path: Path) -> list[dict]:
+def iter_entry_files():
+    """Every entry file across all type folders, as an iterator of Paths."""
+    for folder_name in sorted(set(TYPE_FOLDERS.values())):
+        folder = VAULT_DIR / folder_name
+        if folder.exists():
+            yield from sorted(folder.glob("*.md"))
+
+
+def parse_entry_file(path: Path) -> Optional[dict]:
     """
-    Parse one vault file into a list of entry dicts, newest-last (file order).
-
-    Skips entries with unparseable frontmatter or no `id` rather than raising
-    — a single malformed entry (e.g. from a crash mid-write) should not take
-    down every read of the vault.
+    Parse one entry file into a dict. Returns None for anything that isn't a
+    valid entry — a stray non-Orbit .md file dropped into the folder, or one
+    truncated by a crash mid-write — rather than raising, since a single bad
+    file shouldn't take down a whole vault listing.
     """
-    if not path.exists():
-        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
 
-    text = path.read_text(encoding="utf-8")
-    starts = [m.start() for m in _ENTRY_START.finditer(text)]
-    entries = []
+    if not text.startswith("---\n"):
+        return None
+    fence = text.find("\n---\n", 4)
+    if fence == -1:
+        return None
 
-    for i, start in enumerate(starts):
-        end = starts[i + 1] if i + 1 < len(starts) else len(text)
-        block = text[start:end]
+    try:
+        meta = yaml.safe_load(text[4:fence]) or {}
+    except yaml.YAMLError:
+        return None
+    if not isinstance(meta, dict) or not meta.get("id"):
+        return None
 
-        fence = block.find("\n---\n", 4)
-        if fence == -1:
-            continue  # truncated entry — skip, don't die
-        fm_raw = block[4:fence]
-        body = block[fence + 5:]
+    body = text[fence + 5:]
+    match = _CONTENT_BLOCK.search(body)
+    content = match.group(1).strip() if match else ""
 
-        try:
-            meta = yaml.safe_load(fm_raw) or {}
-        except yaml.YAMLError:
-            continue
-        if not isinstance(meta, dict) or not meta.get("id"):
-            continue
-
-        match = _CONTENT_BLOCK.search(body)
-        content = match.group(1).strip() if match else ""
-
-        entries.append({
-            "id": _coerce_str(meta.get("id")),
-            "type": _coerce_str(meta.get("type")),
-            "source_url": _coerce_str(meta.get("source_url")),
-            "source_platform": _coerce_str(meta.get("source_platform")),
-            "author": _coerce_str(meta.get("author")),
-            "author_handle": _coerce_str(meta.get("author_handle")),
-            "title": _coerce_str(meta.get("title")),
-            "captured_at": _coerce_str(meta.get("captured_at")),
-            "published_at": _coerce_str(meta.get("published_at")) or None,
-            "tags": _coerce_list(meta.get("tags")),
-            "summary": meta.get("summary") or None,
-            "key_insights": _coerce_list(meta.get("key_insights")),
-            "status": _coerce_str(meta.get("status")) or "ingested",
-            "content": content,
-        })
-
-    return entries
+    return {
+        "id": _coerce_str(meta.get("id")),
+        "type": _coerce_str(meta.get("type")),
+        "source_url": _coerce_str(meta.get("source_url")),
+        "source_platform": _coerce_str(meta.get("source_platform")),
+        "author": _coerce_str(meta.get("author")),
+        "author_handle": _coerce_str(meta.get("author_handle")),
+        "title": _coerce_str(meta.get("title")),
+        "captured_at": _coerce_str(meta.get("captured_at")),
+        "published_at": _coerce_str(meta.get("published_at")) or None,
+        "tags": _coerce_list(meta.get("tags")),
+        "summary": meta.get("summary") or None,
+        "key_insights": _coerce_list(meta.get("key_insights")),
+        "status": _coerce_str(meta.get("status")) or "ingested",
+        "content": content,
+        "vault_file": path.name,
+        "vault_path": str(path.relative_to(VAULT_DIR)),
+    }
 
 
 def load_vault_entries() -> list[dict]:
-    """All entries across both vault files, tagged with their source file."""
+    """Every valid entry across the vault."""
     entries = []
-    for path in (BOOKMARKS_FILE, TRANSCRIPTS_FILE):
-        for entry in parse_vault_file(path):
-            entry["vault_file"] = path.name
-            entries.append(entry)
+    for path in iter_entry_files():
+        parsed = parse_entry_file(path)
+        if parsed:
+            entries.append(parsed)
     return entries
+
+
+# ──────────────────────────────────────────────
+# Auto-Linking
+# ──────────────────────────────────────────────
+#
+# Obsidian's graph view draws an edge for every [[wikilink]] between two
+# files. Without links, one-file-per-entry is graph-view input with nothing
+# to graph — a wall of disconnected dots. Real semantic linking (the Chroma
+# vector index) is a separate, larger piece of work; this is the cheap
+# version that ships now: entries sharing enrichment tags get linked to each
+# other. It degrades gracefully — an entry with no tags (not yet enriched)
+# simply has no links yet, and picks them up automatically once it is.
+#
+# Only one direction needs writing. Obsidian's own backlinks panel surfaces
+# the reverse automatically for any note that's linked TO, and the graph
+# draws the edge regardless of which file's frontmatter caused it.
+
+MAX_RELATED = 5
+MIN_SHARED_TAGS = 1
+
+# format_bookmark_entry() always emits Related, if present, as the last
+# section — so rewriting it is just "cut everything from this marker
+# onward, re-append." No document-structure parsing required.
+_RELATED_MARKER = "\n\n## Related\n\n"
+
+
+def find_related(tags: list[str], exclude_id: str, entries: list[dict] = None) -> list[tuple]:
+    """
+    Rank other entries by shared-tag count and return the top matches as
+    (wikilink_stem, title) pairs. Pass a pre-loaded `entries` list to avoid
+    re-scanning the whole vault when linking many entries in one pass.
+    """
+    if not tags:
+        return []
+    wanted = {t.lower() for t in tags}
+    if entries is None:
+        entries = load_vault_entries()
+
+    scored = []
+    for entry in entries:
+        if entry["id"] == exclude_id:
+            continue
+        overlap = len(wanted & {t.lower() for t in entry["tags"]})
+        if overlap >= MIN_SHARED_TAGS:
+            stem = Path(entry["vault_path"]).stem
+            scored.append((overlap, stem, entry["title"] or stem))
+
+    scored.sort(key=lambda t: -t[0])
+    return [(stem, title) for _, stem, title in scored[:MAX_RELATED]]
+
+
+def render_related_section(related: list[tuple]) -> str:
+    """Render the trailing '## Related' block, or '' if there's nothing to link."""
+    if not related:
+        return ""
+    lines = "\n".join(f"- [[{stem}|{title}]]" for stem, title in related)
+    return f"{_RELATED_MARKER}{lines}"
+
+
+def strip_related_section(text: str) -> str:
+    """Remove a trailing Related block, if present. Idempotent."""
+    idx = text.find(_RELATED_MARKER)
+    return text[:idx] if idx != -1 else text
+
+
+def rebuild_related_links() -> int:
+    """
+    Recompute every entry's Related section from current tags and rewrite it
+    in place. Safe to run any time tags change underneath already-written
+    files — a backfill run that enriches previously-empty entries, or the
+    one-time migration into this layout. Returns the number of files changed.
+    """
+    entries = load_vault_entries()
+    changed = 0
+
+    for entry in entries:
+        related = find_related(entry["tags"], entry["id"], entries=entries)
+        path = VAULT_DIR / entry["vault_path"]
+        text = path.read_text(encoding="utf-8")
+        # Match format_bookmark_entry's invariant exactly: the file ends with
+        # one newline whether or not a Related section follows.
+        base = strip_related_section(text).rstrip("\n")
+        new_text = base + render_related_section(related) + "\n"
+
+        if new_text != text:
+            path.write_text(new_text, encoding="utf-8")
+            changed += 1
+
+    return changed
 
 
 # ──────────────────────────────────────────────
@@ -955,15 +1095,36 @@ def load_vault_entries() -> list[dict]:
 # ──────────────────────────────────────────────
 
 
-async def write_entry(entry: str, is_youtube: bool) -> Path:
-    """Append a rendered entry to the correct vault file under its lock."""
-    target, lock = (
-        (TRANSCRIPTS_FILE, transcript_lock) if is_youtube else (BOOKMARKS_FILE, file_lock)
-    )
-    async with lock:
-        async with aiofiles.open(str(target), mode="a", encoding="utf-8") as f:
-            await f.write(entry)
-    return target
+async def write_entry_file(
+    payload: IngestPayload,
+    entry_id: str,
+    tags: list = None,
+    summary: Optional[str] = None,
+    key_insights: list = None,
+    status: str = "ingested",
+    content_header: str = "Content",
+) -> Path:
+    """
+    Render one entry, link it to whatever related entries currently exist,
+    and write it to its own new file.
+
+    Older files are never rewritten here — only appended-to-the-vault-count.
+    Their links stay whatever they were computed as at their own write time
+    until something calls rebuild_related_links() (a backfill run, or the
+    one-time migration). That's a deliberate asymmetry, not a bug: it keeps
+    every live ingest a single small write instead of a full-vault rescan.
+    """
+    async with vault_write_lock:
+        related = find_related(tags or [], entry_id)
+        text = format_bookmark_entry(
+            payload=payload, entry_id=entry_id, tags=tags, summary=summary,
+            key_insights=key_insights, status=status, content_header=content_header,
+            related=related,
+        )
+        path = entry_path(payload, entry_id)
+        async with aiofiles.open(str(path), mode="w", encoding="utf-8") as f:
+            await f.write(text)
+    return path
 
 
 # ──────────────────────────────────────────────
@@ -1078,7 +1239,7 @@ async def process_payload(payload: IngestPayload, entry_id: str) -> str:
         else "Content"
     )
 
-    entry = format_bookmark_entry(
+    target = await write_entry_file(
         payload=payload,
         entry_id=entry_id,
         tags=enrichment.get("tags", []),
@@ -1087,9 +1248,10 @@ async def process_payload(payload: IngestPayload, entry_id: str) -> str:
         status=status,
         content_header=content_header,
     )
-
-    target = await write_entry(entry, is_youtube)
-    logger.info(f"[Worker] Saved to {target.name} ({status}): {payload.title or payload.source_url}")
+    logger.info(
+        f"[Worker] Saved to {target.relative_to(VAULT_DIR)} ({status}): "
+        f"{payload.title or payload.source_url}"
+    )
     return status
 
 
@@ -1153,10 +1315,9 @@ async def background_worker():
 
                     # Out of attempts — save a stub so the URL isn't lost.
                     try:
-                        entry = format_bookmark_entry(
+                        await write_entry_file(
                             payload=payload, entry_id=entry_id, status="failed"
                         )
-                        await write_entry(entry, payload.type == "youtube")
                     except Exception as write_err:
                         logger.error(f"[Worker] Could not even write stub: {write_err}")
                     log_ingest_entry(
@@ -1227,15 +1388,19 @@ async def ingest(payload: IngestPayload):
 @app.get("/health")
 async def health():
     """Health check endpoint."""
+    entry_counts = {
+        folder_name: len(list((VAULT_DIR / folder_name).glob("*.md")))
+        for folder_name in sorted(set(TYPE_FOLDERS.values()))
+        if (VAULT_DIR / folder_name).exists()
+    }
     return {
         "status": "healthy",
         "queue_size": ingest_queue.qsize(),
         "gemini_available": gemini_available,
         "video_download_enabled": DOWNLOAD_VIDEOS,
-        "bookmarks_file": str(BOOKMARKS_FILE),
-        "bookmarks_exists": BOOKMARKS_FILE.exists(),
-        "transcripts_file": str(TRANSCRIPTS_FILE),
-        "transcripts_exists": TRANSCRIPTS_FILE.exists(),
+        "vault_dir": str(VAULT_DIR),
+        "entry_counts": entry_counts,
+        "total_entries": sum(entry_counts.values()),
     }
 
 

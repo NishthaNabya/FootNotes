@@ -125,26 +125,67 @@ Each bookmark entry is separated by a horizontal rule (`---`) for clean visual a
 
 ## 4. File Organization
 
-All captured content lives in a single vault directory:
+One file per entry, grouped by type into subfolders:
 
 ```
 vault/
-  bookmarks.md          # Tweets, threads, articles — append-only
-  transcripts.md        # YouTube captures, kept separate because a single
-                        #   transcript can dwarf a hundred tweets
-  ingest.log            # SQLite metadata log (not human-readable)
-  videos/               # Local MP4s — only when ORBIT_DOWNLOAD_VIDEOS=1
+  tweets/       <slug>-<id8>.md      # tweets and threads
+  articles/     <slug>-<id8>.md
+  youtube/      <slug>-<id8>.md      # frontmatter type: youtube
+  ingest.log                          # SQLite metadata log (not human-readable)
+  videos/                             # Local MP4s — only when ORBIT_DOWNLOAD_VIDEOS=1
 ```
+
+This exists to make the vault an Obsidian vault, not just a folder Obsidian
+can open. Obsidian's graph view draws an edge for every `[[wikilink]]`
+between two *files* — the original design (two append-only files, one entry
+appended after another) had no files to link between, so the graph would
+have shown two disconnected dots no matter how much was captured.
 
 The vault is gitignored. It's personal reading data, the pipeline rewrites it
 on every run, and video files run to hundreds of megabytes. Back it up
 separately.
 
-Future versions may split further by type, but V2 keeps two files for
-simplicity. Note that splitting into one file per capture is a prerequisite if
-you ever want Obsidian's graph view to read this vault — its graph draws
-`[[wikilinks]]` between separate notes, so a single append-only file renders
-as a single node.
+### The filename
+
+`<slug>-<id8>.md`, where `<slug>` comes from the title (or the source domain,
+if the title is empty) and `<id8>` is the first 8 hex characters of the
+entry's UUID — enough to make the filename unique, not a second identity. The
+full UUID stays the canonical one, in frontmatter, unchanged.
+
+The filename is set once and never renamed, even if the title later changes
+(e.g. a YouTube placeholder title gets replaced by the real one from
+metadata). Once something — a manual note, an Obsidian link — might point at
+a filename, silently renaming it out from under that reference would be a
+worse outcome than living with an occasionally-stale slug.
+
+### Auto-linking
+
+Every write computes which existing entries share enrichment tags with the
+new one and appends a trailing `## Related` section linking to them:
+
+```markdown
+## Related
+
+- [[the-compounding-interest-of-writing-a1b2c3d4|The compounding interest of writing]]
+```
+
+This is deliberately the cheap version of "connections." It only sees exact
+tag string matches — two entries about the same idea tagged `pkm` and
+`personal-knowledge-management` respectively won't link, and with a small,
+LLM-tagged vault it is common for very few (or zero) entries to share a tag
+at all. A real semantic version (nearest-neighbor over embeddings, already
+partially built as an unused Chroma index) is future work; this is what
+ships now, and it degrades gracefully — an unenriched entry has no tags and
+therefore no links, and gains them automatically the moment it's enriched.
+
+Only the linking file needs to be written: Obsidian's backlinks panel
+surfaces the reverse direction automatically for any note that's linked
+*to*, and the graph draws the edge regardless of which file caused it. Older
+entries don't get rewritten when a new one could link to them — that's what
+`rebuild_related_links()` in `server.py` is for, run wholesale by both
+`migrate_to_obsidian.py` and `backfill.py` after either changes tags on a
+scale a single new write wouldn't reach.
 
 ---
 
@@ -178,19 +219,19 @@ mindmap
         Background Worker
           Pop from queue
           Call LLM for enrichment
-          Apply Jinja2 template
-          Acquire file lock
-          Append to vault/bookmarks.md
+          Compute tag-overlap links
+          Write its own file under vault/<type>/
         Ingest Log
           SQLite metadata
           Status tracking
           Retry counts
     Storage Layer
       vault/
-        bookmarks.md
+        tweets/, articles/, youtube/
+          One file per entry
           YAML frontmatter
           Markdown body
-          Append-only
+          Trailing Related section
         ingest.log
           Timestamp
           URL
@@ -223,7 +264,7 @@ Hey — let me walk you through *why* we're organizing data this way, because th
 
 ### The YAML Frontmatter
 
-Think of YAML frontmatter as a **passport** for each piece of content. When an LLM reads your `bookmarks.md` file later, it doesn't need to parse the entire body to understand what it's looking at. The frontmatter gives it structured metadata upfront: *what is this, who wrote it, when was it captured, what topics does it cover?*
+Think of YAML frontmatter as a **passport** for each piece of content. When an LLM (or Obsidian, or you) reads a vault entry later, it doesn't need to parse the entire body to understand what it's looking at. The frontmatter gives it structured metadata upfront: *what is this, who wrote it, when was it captured, what topics does it cover?*
 
 This matters because LLMs are expensive to run and limited in context. If you ask "what did I save about distributed systems last month?", the LLM can scan just the `tags` and `captured_at` fields in the frontmatter — it doesn't need to read every word of every bookmark. It's the difference between reading a library's card catalog versus walking every shelf.
 
@@ -252,25 +293,21 @@ The mind map above is the **entire Orbit ecosystem** in one view. Here's what ea
 
 - **Capture Layer** — everything that happens in your browser. The extension intercepts bookmarks, normalizes the data, and ships it to the server. If the server is down, it queues locally.
 - **Processing Layer** — the Python server. It receives data, queues it, enriches it with an LLM, and writes it to disk safely with file locks.
-- **Storage Layer** — your vault. A single `bookmarks.md` file that grows over time. No database, no cloud, just plain text on your machine.
+- **Storage Layer** — your vault. One markdown file per entry, grouped by type. No database, no cloud, just plain text on your machine — and, because it's one file per entry, an Obsidian vault as-is.
 - **Enrichment Layer** — the intelligence. LLMs add structure and meaning. External APIs pull in transcripts and clean article text.
 - **User Experience** — the philosophy. Zero friction. You bookmark, Orbit handles the rest. No terminal, no config, no thinking.
 
-### Why One File?
+### Why One File *Per Entry*?
 
-You might ask: why not split bookmarks into separate files by type or date? The answer is **simplicity**. One append-only file means:
+Earlier versions of this document argued the opposite — one append-only file per type, for simplicity: no filenames to manage, an LLM can read everything in one context window, `git diff` shows exactly what changed.
 
-- No file naming conventions to manage
-- No directory structure to navigate
-- An LLM can read the entire file in one context window (up to its limit)
-- Backups are trivial: copy one file
-- Version control is clean: `git diff` shows exactly what changed
+All still true. It lost to a bigger constraint: **Obsidian's graph view draws an edge for every `[[wikilink]] between two files`.** Two giant files are two disconnected dots no matter how much they hold. If part of the point of this vault is to eventually *see* it — as a graph, as connections between ideas — the content has to live in something that can be a node.
 
-When your vault grows beyond what a single LLM context window can handle, we'll add splitting logic. But V2 keeps it simple. File over app. One file over many.
+The tradeoffs from the old approach are real and now yours to live with: filenames to think about (handled by `slugify()` + a short id suffix, see §4), a directory to navigate (small at this vault's size), and `git diff` on a change now touches one small file instead of one line in a big one — arguably an improvement, since the vault itself is gitignored anyway and this only matters for reading the pipeline's own diffs.
 
 ### The Append-Only Guarantee
 
-Every bookmark is **appended**, never modified. This gives you:
+Every bookmark gets its own new file, never merged into an existing one. This gives you:
 
 - An immutable history of everything you've captured
 - No risk of overwriting good data with bad

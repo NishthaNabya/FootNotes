@@ -7,20 +7,31 @@ changes nothing the second time.
 
 What it repairs, in order:
 
-1. Deduplicates entries sharing a normalized URL, keeping the richest copy.
-2. Re-derives `type` and `source_platform` from the URL, so YouTube videos
-   filed as articles become videos — and get routed to transcripts.md.
+1. Deduplicates entries sharing a normalized URL, keeping the richest copy
+   and deleting the loser's file.
+2. Re-derives `type` and `source_platform` from the URL — so a YouTube video
+   filed as an article moves into vault/youtube/, not just relabeled.
 3. Recovers tweet authors lost by the old interceptor, via X's public oEmbed
    endpoint. No auth required.
 4. Re-fetches YouTube transcripts and metadata that the old broken
    list_transcripts() call never got.
 5. Re-extracts article text where only a stub was saved.
 6. Re-enriches anything with real content and no tags.
-7. Rebuilds the SQLite ingest log so deduplication works going forward.
+7. Recomputes every entry's tag-overlap links, since re-enrichment changes
+   tags and this vault's graph is only as connected as its tags overlap.
+8. Rebuilds the SQLite ingest log so deduplication works going forward.
+
+Operates on the one-file-per-entry layout under vault/{tweets,articles,
+youtube}/. parse_vault_file() below is the OLD multi-entry-per-file parser,
+kept only because migrate_to_obsidian.py still needs it to read the
+pre-migration vault.bookmarks.md / transcripts.md exactly once. Everything
+in this script's own main() reads through server.load_vault_entries()
+instead — if you're looking for where the vault gets discovered today,
+that's it, not this file's own parser.
 
 Usage:
     python backfill.py --dry-run     # report what would change, touch nothing
-    python backfill.py               # repair in place (writes a .bak first)
+    python backfill.py               # repair in place (backs up the vault first)
     python backfill.py --force       # also re-enrich entries that already have tags
 
 Requires the same environment as server.py — a .env with a working
@@ -331,16 +342,18 @@ async def main() -> int:
 
     import server
 
-    files = [server.BOOKMARKS_FILE, server.TRANSCRIPTS_FILE]
-    raw: list[tuple[dict, str]] = []
-    for f in files:
-        parsed = parse_vault_file(f)
-        print(f"[Backfill] {f.name}: {len(parsed)} entries parsed")
-        raw.extend(parsed)
+    loaded = server.load_vault_entries()
+    print(f"[Backfill] {len(loaded)} entries found under {server.VAULT_DIR}")
 
-    if not raw:
+    if not loaded:
         print("[Backfill] Nothing to do — vault is empty.")
         return 0
+
+    # Each entry dict already carries frontmatter + content + vault_path in
+    # one place; split off content so the existing (meta, content) shaped
+    # repair machinery below — written before this layout existed — doesn't
+    # need to change. `meta` keeps its 'vault_path' key throughout.
+    raw: list[tuple[dict, str]] = [(e, e.pop("content")) for e in loaded]
 
     # ── Deduplicate on normalized URL ──
     groups: dict[str, list] = {}
@@ -349,12 +362,19 @@ async def main() -> int:
         groups.setdefault(key, []).append((meta, content))
 
     unique = []
+    to_delete: list[Path] = []
     dropped = 0
     for key, members in groups.items():
         if len(members) > 1:
             dropped += len(members) - 1
             print(f"[Backfill] Deduplicating x{len(members)}: {key[:66]}")
-        unique.append(choose_best(members))
+        best = choose_best(members)
+        unique.append(best)
+        to_delete.extend(
+            server.VAULT_DIR / meta["vault_path"]
+            for meta, _content in members
+            if meta is not best[0]
+        )
 
     print(f"[Backfill] {len(raw)} entries → {len(unique)} unique ({dropped} duplicates dropped)")
 
@@ -366,41 +386,66 @@ async def main() -> int:
     for meta, content in sorted(unique, key=lambda pair: _captured_sort_key(pair[0])):
         result = await repair_entry(meta, content, args.force, args.dry_run)
         payload, content, tags, summary, insights, status, actions = result
-        repaired.append((meta["id"], payload, tags, summary, insights, status))
+        repaired.append((meta["id"], Path(meta["vault_path"]), payload, tags, summary, insights, status))
         label = (payload.title or payload.source_url)[:46]
         print(f"  {status:9s} {payload.type:8s} {label:48s} {'; '.join(actions) or '(no change)'}")
 
     if args.dry_run:
+        if to_delete:
+            print(f"\n[Backfill] Would delete {len(to_delete)} duplicate file(s).")
         print("\n[Backfill] Dry run — nothing written.")
         return 0
 
-    # ── Back up, then rewrite both vault files from scratch ──
+    # ── Back up the whole vault before touching anything ──
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    for f in files:
-        if f.exists():
-            backup = f.with_suffix(f".{stamp}.bak")
-            shutil.copy2(f, backup)
-            print(f"[Backfill] Backed up {f.name} → {backup.name}")
+    backup_dir = server.VAULT_DIR / ".backfill-backups" / stamp
+    for folder_name in sorted(set(server.TYPE_FOLDERS.values())):
+        src = server.VAULT_DIR / folder_name
+        if src.exists():
+            shutil.copytree(src, backup_dir / folder_name)
+    print(f"[Backfill] Backed up vault to {backup_dir.relative_to(server.VAULT_DIR)}")
 
-    buckets = {server.BOOKMARKS_FILE: [], server.TRANSCRIPTS_FILE: []}
-    for entry_id, payload, tags, summary, insights, status in repaired:
+    # ── Delete losing duplicates ──
+    for path in to_delete:
+        if path.exists():
+            path.unlink()
+    if to_delete:
+        print(f"[Backfill] Deleted {len(to_delete)} duplicate file(s).")
+
+    # ── Write each surviving entry back to its own file ──
+    # A filename is a courtesy label, not an identity, and once Obsidian
+    # links exist they point at it — so it never gets regenerated from a
+    # possibly-changed title. Only the containing folder moves, and only
+    # when the type itself changed (e.g. article -> youtube).
+    for entry_id, old_relpath, payload, tags, summary, insights, status in repaired:
         header = (
             "Transcript"
             if payload.type == "youtube" and not server.is_placeholder_content(payload.content)
             else "Content"
         )
+        # No related= here — rebuild_related_links() below recomputes every
+        # entry's links in one pass once all tags are final, which is
+        # cheaper and more correct than doing it mid-repair, entry by entry.
         rendered = server.format_bookmark_entry(
             payload=payload, entry_id=entry_id, tags=tags, summary=summary,
             key_insights=insights, status=status, content_header=header,
         )
-        target = (
-            server.TRANSCRIPTS_FILE if payload.type == "youtube" else server.BOOKMARKS_FILE
-        )
-        buckets[target].append(rendered)
 
-    for path, entries in buckets.items():
-        path.write_text("".join(entries), encoding="utf-8")
-        print(f"[Backfill] Wrote {len(entries)} entries → {path.name}")
+        old_path = server.VAULT_DIR / old_relpath
+        new_folder_name = server.TYPE_FOLDERS.get(payload.type, "articles")
+        new_path = server.VAULT_DIR / new_folder_name / old_relpath.name
+
+        new_path.parent.mkdir(exist_ok=True)
+        new_path.write_text(rendered, encoding="utf-8")
+        if new_path != old_path and old_path.exists():
+            old_path.unlink()
+            print(f"  moved -> {new_folder_name}/{old_relpath.name}")
+
+    print(f"[Backfill] Wrote {len(repaired)} entries.")
+
+    # ── Relink the whole vault now that tags have changed ──
+    changed = server.rebuild_related_links()
+    print(f"[Backfill] Relinked {changed} entries by shared tags.")
 
     # ── Rebuild the ingest log so dedup works from here on ──
     server.init_ingest_log()
@@ -408,7 +453,7 @@ async def main() -> int:
     conn.execute("DELETE FROM ingest_log")
     conn.commit()
     conn.close()
-    for entry_id, payload, _t, _s, _i, status in repaired:
+    for entry_id, _old, payload, _t, _s, _i, status in repaired:
         server.log_ingest_entry(entry_id, payload.source_url, payload.type, status)
     print(f"[Backfill] Rebuilt ingest log with {len(repaired)} entries")
 
