@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import BackgroundTasks
 
 import server
+import backfill
 
 
 class FakeEmbeddingProvider:
@@ -323,7 +324,46 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
         entry = server.load_vault_entries()[0]
         self.assertEqual(status, "ingested")
         self.assertEqual(entry["user_note"], "")
-        self.assertIn("user_note: null", (self.root / entry["vault_path"]).read_text())
+        self.assertEqual(entry["source_url"], "https://example.com/zero-friction")
+        self.assertEqual(entry["captured_at"], "2026-08-12T12:00:00+00:00")
+        expected_hash = server.captured_content_hash(
+            "Capture remains complete without annotation."
+        )
+        self.assertEqual(entry["content_hash"], expected_hash)
+        markdown = (self.root / entry["vault_path"]).read_text()
+        self.assertIn(f"content_hash: {expected_hash}", markdown)
+        self.assertIn("user_note: null", markdown)
+
+    async def test_backfill_does_not_replace_a_short_captured_article(self):
+        content = "A short but complete saved page."
+        meta = {
+            "id": "short-original-1",
+            "type": "article",
+            "source_url": "https://example.com/short-original",
+            "source_platform": "other",
+            "author": "Ada Example",
+            "author_handle": "@ada",
+            "title": "Short original",
+            "captured_at": "2026-08-12T12:00:00+00:00",
+            "published_at": None,
+            "user_note": None,
+            "tags": ["example"],
+            "summary": "Already enriched.",
+            "key_insights": [],
+            "status": "enriched",
+        }
+        with patch.object(
+            server,
+            "extract_article_content",
+            new=AsyncMock(return_value="A changed page fetched later."),
+        ) as extract:
+            payload, repaired, *_rest = await backfill.repair_entry(
+                meta, content, force=False, dry_run=False
+            )
+
+        extract.assert_not_awaited()
+        self.assertEqual(repaired, content)
+        self.assertEqual(payload.content, content)
 
     async def test_note_can_arrive_while_capture_is_queued(self):
         payload = self.payload(

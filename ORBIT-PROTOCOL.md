@@ -25,6 +25,7 @@ author_handle: '<@handle or channel slug>'
 title: <tweet first line, video title, or article headline>
 captured_at: <ISO 8601 timestamp>
 published_at: <original publish date if available, else null>
+content_hash: <SHA-256 of the captured content snapshot>
 user_note: <optional short thought written by the user, else null>
 tags:
 - <auto-extracted>
@@ -55,6 +56,7 @@ reads them identically. Don't hand-write frontmatter — go through
 | `title` | string | Yes | Extension or API | First line for tweets, title for articles/videos |
 | `captured_at` | string (ISO 8601) | Yes | Extension | When the user bookmarked it |
 | `published_at` | string (ISO 8601) | No | Extension or API | Original publish timestamp |
+| `content_hash` | string (SHA-256) | Yes for new captures | Server | Fingerprint of the original text snapshot stored in the Markdown body. Legacy entries derive it when read and are not rewritten. |
 | `user_note` | string or null | No | User | Optional personal context: why this mattered or what to do with it. Never AI-generated. |
 | `tags` | array[string] | Yes | LLM enrichment | Auto-extracted topics; empty array if enrichment skipped |
 | `summary` | string or null | No | LLM enrichment | One-sentence distillation |

@@ -525,6 +525,7 @@ def format_bookmark_entry(
         "title": _single_line(payload.title),
         "captured_at": payload.captured_at,
         "published_at": payload.published_at,
+        "content_hash": captured_content_hash(payload.content),
         "user_note": payload.user_note.strip() if payload.user_note else None,
         "tags": tags or [],
         "summary": summary or None,
@@ -557,6 +558,11 @@ def _single_line(value: Optional[str]) -> str:
     if not value:
         return ""
     return " ".join(value.split())
+
+
+def captured_content_hash(content: str) -> str:
+    """Stable fingerprint of the original text snapshot stored in Markdown."""
+    return hashlib.sha256((content or "").strip().encode("utf-8")).hexdigest()
 
 
 # Bodies we wrote ourselves because extraction found nothing. They are not
@@ -1011,6 +1017,11 @@ def parse_entry_file(path: Path) -> Optional[dict]:
         "title": _coerce_str(meta.get("title")),
         "captured_at": _coerce_str(meta.get("captured_at")),
         "published_at": _coerce_str(meta.get("published_at")) or None,
+        # Legacy Markdown remains compatible: expose a stable hash without
+        # rewriting the user's file merely to add newer provenance metadata.
+        "content_hash": (
+            _coerce_str(meta.get("content_hash")) or captured_content_hash(content)
+        ),
         "user_note": _coerce_str(meta.get("user_note")),
         "tags": _coerce_list(meta.get("tags")),
         "summary": meta.get("summary") or None,

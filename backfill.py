@@ -15,7 +15,7 @@ What it repairs, in order:
    endpoint. No auth required.
 4. Re-fetches YouTube transcripts and metadata that the old broken
    list_transcripts() call never got.
-5. Re-extracts article text where only a stub was saved.
+5. Re-extracts article text only where an explicit extraction-failure stub was saved.
 6. Re-enriches anything with real content and no tags.
 7. Recomputes every entry's tag-overlap links, since re-enrichment changes
    tags and this vault's graph is only as connected as its tags overlap.
@@ -270,9 +270,12 @@ async def repair_entry(meta: dict, content: str, force: bool, dry_run: bool) -> 
                     if md.get("upload_date"):
                         published = server.normalize_upload_date(md["upload_date"])
 
-    # ── Articles: re-extract where only a stub was saved ──
+    # ── Articles: re-extract only where no page snapshot was captured ──
+    # Length alone is not evidence of failure: a legitimate short page is
+    # still historical capture evidence and must not be replaced by today's
+    # version of the URL during derived repair work.
     elif real_type == "article" and (
-        server.is_placeholder_content(content) or len(content.strip()) < 200
+        server.is_placeholder_content(content) or not content.strip()
     ):
         if dry_run:
             actions.append("re-extract article")

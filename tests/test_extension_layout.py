@@ -99,6 +99,13 @@ class ExtensionLayoutTests(unittest.TestCase):
         self.assertIn("[contenteditable='true']", source)
         self.assertNotIn(".value", source)
 
+    def test_optional_personal_thought_uses_intent_prompt(self):
+        popup = (EXTENSION_ROOT / "popup.html").read_text()
+        self.assertIn("Why are you saving this?", popup)
+        self.assertIn("Optional — something future-you should remember", popup)
+        self.assertIn("Saved ✓", popup)
+        self.assertNotIn("Add a thought…", popup)
+
 
 if __name__ == "__main__":
     unittest.main()

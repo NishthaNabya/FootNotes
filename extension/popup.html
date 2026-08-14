@@ -46,6 +46,8 @@
     .saved-label { color: #77e5c8; font-size: 12px; font-weight: 550; }
     .saved-title { margin: 3px 0 9px; overflow: hidden; color: rgba(232,236,242,.55); font-size: 11px;
                    text-overflow: ellipsis; white-space: nowrap; }
+    .note-prompt { display: block; margin-bottom: 5px; color: rgba(232,236,242,.78); font-size: 11.5px;
+                   font-weight: 500; }
     .note-form { display: flex; gap: 6px; }
     .note-input { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid rgba(255,255,255,.10); border-radius: 6px;
                   outline: 0; color: #e8ecf2; background: rgba(0,0,0,.18); font: inherit; font-size: 11.5px; }
@@ -102,8 +104,9 @@
   <section id="captureNote" class="capture-note" aria-label="Recent capture">
     <div class="saved-label">Saved ✓</div>
     <div id="savedTitle" class="saved-title"></div>
+    <label class="note-prompt" for="noteInput">Why are you saving this?</label>
     <form id="noteForm" class="note-form">
-      <input id="noteInput" class="note-input" maxlength="500" placeholder="Add a thought…" aria-label="Why did you save this?" />
+      <input id="noteInput" class="note-input" maxlength="500" placeholder="Optional — something future-you should remember" aria-label="Why are you saving this? Optional." />
       <button id="noteSave" class="note-save" type="submit">Save</button>
     </form>
     <div id="noteMessage" class="note-message" aria-live="polite"></div>
