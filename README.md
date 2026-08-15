@@ -301,7 +301,6 @@ node --check extension/content.js
 node --check extension/interceptor.js
 node --check extension/popup.js
 node --check extension/recall.js
-./node_modules/.bin/tsc --noEmit
 ```
 
 Maintenance commands are deliberately explicit and resumable:

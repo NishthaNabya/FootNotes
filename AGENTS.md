@@ -13,7 +13,6 @@ Orbit is an open, local-first memory layer for the internet. Its loop is **Captu
 - `scripts/`: allowlisted extension packaging and the macOS app release build.
 - `backfill.py`, `backfill_embeddings.py`, `migrate_to_obsidian.py`: safe maintenance and migrations.
 - `vault/` (gitignored): user-owned Markdown source of truth plus local SQLite indexes. Never treat it as disposable build output.
-- `src/orbit-front.tsx`: standalone prototype UI, not the current product runtime.
 
 ## Run and verify
 
@@ -24,7 +23,6 @@ npm run test:recall-ui
 ./.venv/bin/python -m compileall -q server.py providers.py orbit_config.py orbit_app.py backfill.py backfill_embeddings.py migrate_to_obsidian.py
 node --check extension/background.js && node --check extension/content.js && node --check extension/interceptor.js && node --check extension/popup.js && node --check extension/recall.js && node --check extension/recall-state.js
 ./.venv/bin/python -m json.tool extension/manifest.json >/dev/null
-./node_modules/.bin/tsc --noEmit
 ./.venv/bin/python scripts/package_extension.py
 ```
 
