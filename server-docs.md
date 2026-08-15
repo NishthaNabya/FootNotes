@@ -1,6 +1,6 @@
-# Orbit local service
+# Footnote local service
 
-`server.py` is Orbit's local processing and retrieval service. It accepts
+`server.py` is Footnote's local processing and retrieval service. It accepts
 captures from the Chrome extension, writes canonical Markdown, and maintains a
 rebuildable SQLite index beside the vault.
 
@@ -45,7 +45,7 @@ failure is recorded in derived SQLite state and never rolls back Markdown.
 
 Articles are extracted with `trafilatura`. YouTube captures use metadata from
 `yt-dlp` and transcripts from `youtube-transcript-api` when available. Full
-video download is off by default and controlled by `ORBIT_DOWNLOAD_VIDEOS=1`.
+video download is off by default and controlled by `FOOTNOTE_DOWNLOAD_VIDEOS=1`.
 
 ## Persistence
 
@@ -71,12 +71,12 @@ from being generated.
 
 ## Local enrichment
 
-When Ollama and the configured models are ready, Orbit requests structured
+When Ollama and the configured models are ready, Footnote requests structured
 tags, a summary, and key insights through Ollama's local HTTP API. The same
 provider supplies document and query embeddings for Recall, Related, and
 opt-in resurfacing.
 
-Orbit never installs Ollama, starts downloads, or hides model downloads from
+Footnote never installs Ollama, starts downloads, or hides model downloads from
 the user. No AI mode uses empty generated metadata and lexical retrieval.
 
 ## Retrieval
@@ -115,5 +115,5 @@ FastAPI's local interactive schema is available at
 `backfill.py` backs up the vault before repair. `backfill_embeddings.py` only
 creates or repairs derived vector rows and is safe to stop and resume.
 
-See [ORBIT-PROTOCOL.md](ORBIT-PROTOCOL.md) for the canonical format and
+See [FOOTNOTE-PROTOCOL.md](FOOTNOTE-PROTOCOL.md) for the canonical format and
 [RELEASE.md](RELEASE.md) for packaged setup, upgrades, and data locations.

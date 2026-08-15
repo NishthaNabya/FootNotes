@@ -1,5 +1,5 @@
 """
-server.py — Orbit V2 Processing Layer
+server.py — Footnote V2 Processing Layer
 FastAPI server with async queue, file locking, and background worker.
 """
 
@@ -35,8 +35,8 @@ from providers import (
     OllamaProvider,
     OLLAMA_EMBEDDING_DIMENSIONS,
 )
-from orbit_config import (
-    OrbitConfig,
+from footnote_config import (
+    FootnoteConfig,
     load_config,
     save_config,
 )
@@ -44,7 +44,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 
 # Load environment variables from .env file
 load_dotenv()
-PRODUCT_MODE = os.getenv("ORBIT_PRODUCT_MODE", "").lower() in ("1", "true", "yes")
+PRODUCT_MODE = os.getenv("FOOTNOTE_PRODUCT_MODE", "").lower() in ("1", "true", "yes")
 PRODUCT_CONFIG = load_config() if PRODUCT_MODE else None
 
 # ──────────────────────────────────────────────
@@ -52,8 +52,8 @@ PRODUCT_CONFIG = load_config() if PRODUCT_MODE else None
 # ──────────────────────────────────────────────
 
 VAULT_DIR = (
-    Path(os.getenv("ORBIT_VAULT_DIR", "")).expanduser()
-    if os.getenv("ORBIT_VAULT_DIR", "").strip()
+    Path(os.getenv("FOOTNOTE_VAULT_DIR", "")).expanduser()
+    if os.getenv("FOOTNOTE_VAULT_DIR", "").strip()
     else PRODUCT_CONFIG.resolved_vault_path
     if PRODUCT_CONFIG is not None
     else Path(__file__).parent / "vault"
@@ -85,9 +85,9 @@ RETRY_DELAY_SECONDS = 5
 
 # Downloading full MP4s is off by default: it costs hundreds of MB per video and
 # only buys the multimodal path, which the transcript usually covers. Opt in with
-# ORBIT_DOWNLOAD_VIDEOS=1. When enabled the download is awaited (see the worker),
+# FOOTNOTE_DOWNLOAD_VIDEOS=1. When enabled the download is awaited (see the worker),
 # because enrichment cannot analyze a file that hasn't finished writing.
-DOWNLOAD_VIDEOS = os.getenv("ORBIT_DOWNLOAD_VIDEOS", "").lower() in ("1", "true", "yes")
+DOWNLOAD_VIDEOS = os.getenv("FOOTNOTE_DOWNLOAD_VIDEOS", "").lower() in ("1", "true", "yes")
 
 # Long transcripts are mostly redundant for tag extraction. Bound the provider
 # input so local enrichment remains responsive and memory use is predictable.
@@ -99,7 +99,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
-logger = logging.getLogger("orbit")
+logger = logging.getLogger("footnote")
 
 # ──────────────────────────────────────────────
 # Pydantic Models
@@ -164,16 +164,16 @@ def build_intelligence_provider(provider_name: str):
     if provider_name == "ollama":
         config = load_config()
         return OllamaProvider(
-            base_url=os.getenv("ORBIT_OLLAMA_URL", "http://127.0.0.1:11434"),
-            embedding_model=os.getenv("ORBIT_OLLAMA_EMBEDDING_MODEL", config.ollama_embedding_model),
-            enrichment_model=os.getenv("ORBIT_OLLAMA_ENRICHMENT_MODEL", config.ollama_enrichment_model),
+            base_url=os.getenv("FOOTNOTE_OLLAMA_URL", "http://127.0.0.1:11434"),
+            embedding_model=os.getenv("FOOTNOTE_OLLAMA_EMBEDDING_MODEL", config.ollama_embedding_model),
+            enrichment_model=os.getenv("FOOTNOTE_OLLAMA_ENRICHMENT_MODEL", config.ollama_enrichment_model),
             dimensions=OLLAMA_EMBEDDING_DIMENSIONS,
         )
     return NoAIProvider()
 
 
-def selected_provider_name(config: Optional[OrbitConfig]) -> str:
-    override = os.getenv("ORBIT_INTELLIGENCE_PROVIDER", "").strip().lower()
+def selected_provider_name(config: Optional[FootnoteConfig]) -> str:
+    override = os.getenv("FOOTNOTE_INTELLIGENCE_PROVIDER", "").strip().lower()
     if override in {"ollama", "none"}:
         return override
     if override:
@@ -931,7 +931,7 @@ def iter_entry_files():
 def parse_entry_file(path: Path) -> Optional[dict]:
     """
     Parse one entry file into a dict. Returns None for anything that isn't a
-    valid entry — a stray non-Orbit .md file dropped into the folder, or one
+    valid entry — a stray non-Footnote .md file dropped into the folder, or one
     truncated by a crash mid-write — rather than raising, since a single bad
     file shouldn't take down a whole vault listing.
     """
@@ -1283,8 +1283,8 @@ async def reconcile_embedding_batch(limit: int = 1) -> dict[str, int]:
 
 async def embedding_reconciliation_worker() -> None:
     """Non-blocking, rate-shaped upgrade repair; never delays service startup."""
-    session_limit = max(0, int(os.getenv("ORBIT_BACKGROUND_BACKFILL_LIMIT", "5")))
-    interval = max(5.0, float(os.getenv("ORBIT_BACKGROUND_BACKFILL_INTERVAL", "30")))
+    session_limit = max(0, int(os.getenv("FOOTNOTE_BACKGROUND_BACKFILL_LIMIT", "5")))
+    interval = max(5.0, float(os.getenv("FOOTNOTE_BACKGROUND_BACKFILL_INTERVAL", "30")))
     if not PRODUCT_MODE or session_limit == 0:
         return
     await asyncio.sleep(min(interval, 10.0))
@@ -1936,7 +1936,7 @@ async def persist_user_note_to_markdown(
             )
 
         updated = f"---\n{updated_frontmatter}---\n{text[fence + 5:]}"
-        temporary = target.with_name(f".{target.name}.orbit-note.tmp")
+        temporary = target.with_name(f".{target.name}.footnote-note.tmp")
         temporary.write_text(updated, encoding="utf-8")
         os.replace(temporary, target)
         return parse_entry_file(target)
@@ -2014,7 +2014,7 @@ async def process_payload(payload: IngestPayload, entry_id: str) -> str:
                 # task and then immediately globbed for the finished file, so
                 # enrichment always lost the race and the multimodal path was
                 # effectively dead code.
-                logger.info(f"[Worker] Downloading video (ORBIT_DOWNLOAD_VIDEOS=1)")
+                logger.info(f"[Worker] Downloading video (FOOTNOTE_DOWNLOAD_VIDEOS=1)")
                 video_path = await download_video_locally(payload.source_url, video_id)
 
     # ── Article: full-text extraction via trafilatura ──
@@ -2190,7 +2190,7 @@ async def lifespan(app: FastAPI):
     provider_task = asyncio.create_task(verify_provider())
     worker_task = asyncio.create_task(background_worker())
     reconciliation_task = asyncio.create_task(embedding_reconciliation_worker())
-    logger.info("[Server] Orbit V2 ingestion server started.")
+    logger.info("[Server] Footnote V2 ingestion server started.")
 
     yield
 
@@ -2201,10 +2201,10 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
-    logger.info("[Server] Orbit V2 ingestion server stopped.")
+    logger.info("[Server] Footnote V2 ingestion server stopped.")
 
 
-app = FastAPI(title="Orbit Ingestion Server", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Footnote Ingestion Server", version="0.1.0", lifespan=lifespan)
 
 
 # ──────────────────────────────────────────────
@@ -2221,22 +2221,22 @@ def require_local_setup_origin(request: Request) -> None:
     origin = request.headers.get("origin", "")
     allowed = {"http://localhost:8000", "http://127.0.0.1:8000"}
     if origin and origin not in allowed:
-        raise HTTPException(status_code=403, detail="Local Orbit setup only")
+        raise HTTPException(status_code=403, detail="Local Footnote setup only")
 
 
-@app.get("/orbit", include_in_schema=False)
-async def orbit_home():
+@app.get("/footnote", include_in_schema=False)
+async def footnote_home():
     return FileResponse(onboarding_assets_dir() / "index.html")
 
 
-@app.get("/orbit/{asset_name}", include_in_schema=False)
-async def orbit_asset(asset_name: str):
+@app.get("/footnote/{asset_name}", include_in_schema=False)
+async def footnote_asset(asset_name: str):
     if asset_name not in {"app.js", "style.css"}:
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(onboarding_assets_dir() / asset_name)
 
 
-@app.get("/orbit-api/setup")
+@app.get("/footnote-api/setup")
 async def setup_status():
     await verify_provider()
     config = load_config()
@@ -2250,16 +2250,16 @@ async def setup_status():
         "service": "running",
         "semantic_memory": progress,
         "resurfacing": "off by default; managed in the Chrome extension",
-        "log_path": str(Path.home() / "Library" / "Logs" / "Orbit" / "orbit.log"),
+        "log_path": str(Path.home() / "Library" / "Logs" / "Footnote" / "footnote.log"),
     }
 
 
-@app.post("/orbit-api/choose-folder")
+@app.post("/footnote-api/choose-folder")
 async def choose_storage_folder(request: Request):
     require_local_setup_origin(request)
     if sys.platform != "darwin":
         raise HTTPException(status_code=501, detail="Folder picker is currently available on macOS")
-    script = 'POSIX path of (choose folder with prompt "Choose where your Orbit memories live")'
+    script = 'POSIX path of (choose folder with prompt "Choose where your Footnote memories live")'
     result = await asyncio.to_thread(
         subprocess.run,
         ["/usr/bin/osascript", "-e", script],
@@ -2272,13 +2272,13 @@ async def choose_storage_folder(request: Request):
     return {"cancelled": False, "vault_path": result.stdout.strip().rstrip("/")}
 
 
-@app.get("/orbit-api/ollama-status")
+@app.get("/footnote-api/ollama-status")
 async def ollama_setup_status():
     """Check the supported local runtime without changing active settings."""
     candidate = OllamaProvider(
-        base_url=os.getenv("ORBIT_OLLAMA_URL", "http://127.0.0.1:11434"),
-        embedding_model=os.getenv("ORBIT_OLLAMA_EMBEDDING_MODEL", "embeddinggemma"),
-        enrichment_model=os.getenv("ORBIT_OLLAMA_ENRICHMENT_MODEL", "qwen3:1.7b"),
+        base_url=os.getenv("FOOTNOTE_OLLAMA_URL", "http://127.0.0.1:11434"),
+        embedding_model=os.getenv("FOOTNOTE_OLLAMA_EMBEDDING_MODEL", "embeddinggemma"),
+        enrichment_model=os.getenv("FOOTNOTE_OLLAMA_ENRICHMENT_MODEL", "qwen3:1.7b"),
         dimensions=OLLAMA_EMBEDDING_DIMENSIONS,
     )
     try:
@@ -2287,7 +2287,7 @@ async def ollama_setup_status():
         await candidate.aclose()
 
 
-@app.post("/orbit-api/setup")
+@app.post("/footnote-api/setup")
 async def save_setup(update: SetupUpdate, request: Request):
     require_local_setup_origin(request)
     vault_path = Path(update.vault_path).expanduser()
@@ -2298,9 +2298,9 @@ async def save_setup(update: SetupUpdate, request: Request):
         if not vault_path.is_dir():
             raise OSError("not a folder")
     except OSError as exc:
-        raise HTTPException(status_code=400, detail=f"Orbit cannot use that folder: {exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Footnote cannot use that folder: {exc}") from exc
 
-    config = OrbitConfig(
+    config = FootnoteConfig(
         setup_complete=True,
         vault_path=str(vault_path.resolve()),
         provider=update.provider,
@@ -2314,15 +2314,15 @@ async def save_setup(update: SetupUpdate, request: Request):
         "provider_health": provider_health,
         "vault_path": str(VAULT_DIR),
         "message": (
-            "Orbit is ready. Your intelligence provider is connected."
+            "Footnote is ready. Your intelligence provider is connected."
             if provider_health.get("embedding_ready") and provider_health.get("enrichment_ready")
-            else "Orbit is ready. Capture and exact Recall work without semantic memory."
+            else "Footnote is ready. Capture and exact Recall work without semantic memory."
         ),
     }
 
 
-@app.post("/orbit-api/stop")
-async def stop_orbit(request: Request, background_tasks: BackgroundTasks):
+@app.post("/footnote-api/stop")
+async def stop_footnote(request: Request, background_tasks: BackgroundTasks):
     require_local_setup_origin(request)
     background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
     return {"status": "stopping"}
@@ -2372,7 +2372,7 @@ async def health():
     }
     return {
         "status": "healthy",
-        "service": "orbit",
+        "service": "footnote",
         "version": app.version,
         "queue_size": ingest_queue.qsize(),
         "provider_configured": intelligence_provider.name != "none",

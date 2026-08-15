@@ -10,8 +10,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-import orbit_app
-import orbit_config
+import footnote_app
+import footnote_config
 import server
 from scripts import package_extension
 
@@ -25,8 +25,8 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tempdir.name)
         self.env = patch.dict(os.environ, {
-            "ORBIT_CONFIG_DIR": str(self.root / "config"),
-            "ORBIT_LOG_DIR": str(self.root / "logs"),
+            "FOOTNOTE_CONFIG_DIR": str(self.root / "config"),
+            "FOOTNOTE_LOG_DIR": str(self.root / "logs"),
         })
         self.env.start()
         self.originals = {
@@ -48,7 +48,7 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         result = await server.save_setup(
             server.SetupUpdate(vault_path=str(vault), provider="none"), FakeRequest()
         )
-        config = orbit_config.load_config()
+        config = footnote_config.load_config()
         self.assertTrue(config.setup_complete)
         self.assertEqual(config.resolved_vault_path, vault.resolve())
         self.assertEqual(config.provider, "none")
@@ -68,7 +68,7 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(memory.read_text(encoding="utf-8"), original)
 
     def test_removed_provider_config_migrates_to_no_ai(self):
-        path = orbit_config.config_path()
+        path = footnote_config.config_path()
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({
             "version": 2,
@@ -76,12 +76,37 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
             "vault_path": str(self.root / "vault"),
             "provider": "gemini",
         }), encoding="utf-8")
-        loaded = orbit_config.load_config()
+        loaded = footnote_config.load_config()
         self.assertEqual(loaded.provider, "none")
         self.assertEqual(loaded.resolved_vault_path, self.root / "vault")
         self.assertEqual(json.loads(path.read_text())["provider"], "none")
-        with patch.dict(os.environ, {"ORBIT_INTELLIGENCE_PROVIDER": ""}):
+        with patch.dict(os.environ, {"FOOTNOTE_INTELLIGENCE_PROVIDER": ""}):
             self.assertEqual(server.selected_provider_name(loaded), "none")
+
+    def test_previous_product_config_is_migrated_without_touching_its_vault(self):
+        legacy_settings = self.root / "previous-settings"
+        current_settings = self.root / "current-settings"
+        vault = self.root / "existing-vault"
+        memory = vault / "articles" / "keep.md"
+        memory.parent.mkdir(parents=True)
+        original = "---\nid: keep\ntype: article\n---\n\nHistorical memory\n"
+        memory.write_text(original, encoding="utf-8")
+        legacy_settings.mkdir()
+        (legacy_settings / "config.json").write_text(json.dumps({
+            "version": 3,
+            "setup_complete": True,
+            "vault_path": str(vault),
+            "provider": "none",
+        }), encoding="utf-8")
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(footnote_config, "app_support_dir", return_value=current_settings), \
+             patch.object(footnote_config, "_legacy_app_support_dir", return_value=legacy_settings):
+            loaded = footnote_config.load_config()
+
+        self.assertEqual(loaded.resolved_vault_path, vault)
+        self.assertTrue((current_settings / "config.json").exists())
+        self.assertEqual(memory.read_text(encoding="utf-8"), original)
 
     def test_existing_enriched_markdown_remains_readable(self):
         vault = self.root / "historic-vault"
@@ -151,20 +176,20 @@ class LauncherAndPackagingTests(unittest.TestCase):
         self.assertIn('"qwen3:1.7b":"about 1.4 GB"', script)
 
     def test_duplicate_launch_reuses_existing_service(self):
-        with patch.object(orbit_app, "health", return_value={"service": "orbit"}), \
-             patch.object(orbit_app, "open_status") as opened, \
-             patch("orbit_app.subprocess.Popen") as spawned:
-            self.assertEqual(orbit_app.start(), 0)
+        with patch.object(footnote_app, "health", return_value={"service": "footnote"}), \
+             patch.object(footnote_app, "open_status") as opened, \
+             patch("footnote_app.subprocess.Popen") as spawned:
+            self.assertEqual(footnote_app.start(), 0)
         opened.assert_called_once()
         spawned.assert_not_called()
 
     def test_port_conflict_has_clear_error_and_does_not_spawn(self):
-        with patch.object(orbit_app, "health", return_value=None), \
-             patch.object(orbit_app, "port_is_in_use", return_value=True), \
-             patch.object(orbit_app, "wait_for_orbit", return_value=None), \
-             patch.object(orbit_app, "show_error") as error, \
-             patch("orbit_app.subprocess.Popen") as spawned:
-            self.assertEqual(orbit_app.start(open_browser=False), 2)
+        with patch.object(footnote_app, "health", return_value=None), \
+             patch.object(footnote_app, "port_is_in_use", return_value=True), \
+             patch.object(footnote_app, "wait_for_footnote", return_value=None), \
+             patch.object(footnote_app, "show_error") as error, \
+             patch("footnote_app.subprocess.Popen") as spawned:
+            self.assertEqual(footnote_app.start(open_browser=False), 2)
         self.assertIn("Port 8000", error.call_args.args[0])
         spawned.assert_not_called()
 

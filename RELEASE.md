@@ -1,11 +1,11 @@
-# Orbit v0.1 release and installation
+# Footnote v0.1 release and installation
 
 ## What ships
 
-- `Orbit-macOS-arm64-0.1.0.zip`: a self-contained macOS app. The bundled
+- `Footnote-macOS-arm64-0.1.0.zip`: a self-contained macOS app. The bundled
 FastAPI runtime runs without a Terminal window and logs to
-  `~/Library/Logs/Orbit/orbit.log`.
-- `orbit-extension-0.1.0.zip`: a Manifest V3 package containing only the files
+  `~/Library/Logs/Footnote/footnote.log`.
+- `footnote-extension-0.1.0.zip`: a Manifest V3 package containing only the files
   Chrome executes. It is ready to upload to Chrome Web Store; listing review
   and approval remain manual.
 
@@ -14,61 +14,55 @@ still work elsewhere, but Windows/Linux public launchers are not packaged yet.
 
 ## Install
 
-Unzip the macOS artifact, move `Orbit.app` to `/Applications`, and open it.
+Unzip the macOS artifact, move `Footnote.app` to `/Applications`, and open it.
 On first run:
 
-1. Choose where your memories live. The default is `~/Documents/Orbit`.
+1. Choose where your memories live. The default is `~/Documents/Footnote`.
 2. Choose Local AI or No AI. Local AI uses an already-installed Ollama runtime.
-   Orbit detects missing prerequisites and shows download sizes/instructions;
+   Footnote detects missing prerequisites and shows download sizes/instructions;
    it never installs software or model weights itself.
 3. Read the short local/provider privacy explanation and finish setup.
-4. Install Orbit from Chrome Web Store when published. For prerelease testing,
+4. Install Footnote from Chrome Web Store when published. For prerelease testing,
    unzip the extension artifact and use Chrome's supported **Load unpacked**
    flow on that extracted folder.
 5. Save one item and confirm **Saved ✓** in the extension. Press ⌘⇧O for Recall.
 
-Chrome does not allow an app to silently install an extension. Orbit does not
+Chrome does not allow an app to silently install an extension. Footnote does not
 work around that security boundary.
 
 ## Where data and settings live
 
-- Memories: the user-selected folder (default `~/Documents/Orbit`). Markdown is
+- Memories: the user-selected folder (default `~/Documents/Footnote`). Markdown is
   canonical; `ingest.log` in the same folder contains rebuildable metadata and
   embeddings.
-- Settings: `~/Library/Application Support/Orbit/config.json`.
-- Logs: `~/Library/Logs/Orbit/orbit.log`.
+- Settings: `~/Library/Application Support/Footnote/config.json`.
+- Logs: `~/Library/Logs/Footnote/footnote.log`.
 
 ## Upgrade
 
-Quit/stop Orbit from its status page, replace `Orbit.app`, and reopen it. Do not
+Quit/stop Footnote from its status page, replace `Footnote.app`, and reopen it. Do not
 move or delete the selected memory folder or Application Support settings.
 Database migrations are additive. Missing/stale embeddings are repaired in
 small resumable background batches and never block startup.
 
 An upgraded configuration naming an unsupported provider is migrated to No AI,
 so startup, Capture, and lexical Recall remain available. The user can choose
-Local AI from Orbit's setup surface when Ollama is ready. Historical embedding
+Local AI from Footnote's setup surface when Ollama is ready. Historical embedding
 rows for other providers remain inert derived data; Ollama creates its own rows
 incrementally without rewriting Markdown.
 
 To bring an older source checkout vault into the app, choose that existing
-`vault/` directory during first-run setup. Orbit uses the files in place; it
+`vault/` directory during first-run setup. Footnote uses the files in place; it
 does not copy, rename, or rewrite them merely because they were selected.
 
 ## Uninstall
 
-Stop Orbit and move `/Applications/Orbit.app` to Trash. Remove the Chrome
+Stop Footnote and move `/Applications/Footnote.app` to Trash. Remove the Chrome
 extension normally. This intentionally leaves the memory folder, settings,
 and derived SQLite data in place so reinstalling is safe.
 
 If the user explicitly wants a complete settings cleanup, they may separately
-remove `~/Library/Application Support/Orbit` and `~/Library/Logs/Orbit`.
-Orbit does not automatically delete credentials stored by older builds. The
-obsolete Keychain credential, if present, can be removed manually with:
-
-```bash
-security delete-generic-password -s com.orbit.memory -a gemini-api-key
-```
+remove `~/Library/Application Support/Footnote` and `~/Library/Logs/Footnote`.
 
 Never remove the chosen memory folder unless the user separately decides to
 delete their memories.

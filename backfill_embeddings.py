@@ -1,4 +1,4 @@
-"""Resumable embedding backfill for Orbit's Markdown vault.
+"""Resumable embedding backfill for Footnote's Markdown vault.
 
 Markdown remains canonical. This command only creates or repairs derived rows
 in vault/ingest.log and is safe to stop and rerun.

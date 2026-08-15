@@ -10,8 +10,8 @@
       font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: #e8ecf2;
       background:
-        radial-gradient(ellipse at 70% 90%, rgba(52,216,176,0.07) 0%, transparent 55%),
-        radial-gradient(ellipse at 20% 10%, rgba(91,140,255,0.08) 0%, transparent 55%),
+        radial-gradient(ellipse at 70% 90%, rgba(216,90,48,0.09) 0%, transparent 55%),
+        radial-gradient(ellipse at 20% 10%, rgba(216,90,48,0.05) 0%, transparent 55%),
         #0a0e1a;
     }
     .head { display: flex; align-items: center; gap: 9px; padding: 14px 16px 12px; }
@@ -22,7 +22,7 @@
     .status { display: flex; align-items: center; gap: 8px; padding: 11px 16px;
               border-top: 1px solid rgba(255,255,255,.06); }
     .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
-    .ok   { background: #34d8b0; box-shadow: 0 0 7px #34d8b0; }
+    .ok   { background: #d85a30; box-shadow: 0 0 7px #d85a30; }
     .warn { background: #f5b443; box-shadow: 0 0 7px #f5b443; }
     .bad  { background: #ff6b6b; box-shadow: 0 0 7px #ff6b6b; }
     #statusText { font-size: 12px; }
@@ -36,14 +36,14 @@
            color: rgba(232,236,242,.65); }
     .row b { color: #e8ecf2; font-weight: 500; }
     .muted { color: rgba(232,236,242,.35); }
-    .recall { display: block; margin: 0 16px 14px; padding: 9px 12px; border: 1px solid rgba(52,216,176,.35);
-              border-radius: 7px; color: #dffbf4; background: rgba(52,216,176,.08); text-align: center;
+    .recall { display: block; margin: 0 16px 14px; padding: 9px 12px; border: 1px solid rgba(216,90,48,.40);
+              border-radius: 7px; color: #f5e4de; background: rgba(216,90,48,.10); text-align: center;
               font: inherit; text-decoration: none; cursor: pointer; width: calc(100% - 32px); }
-    .recall:hover { background: rgba(52,216,176,.14); }
+    .recall:hover { background: rgba(216,90,48,.17); }
     .capture-note { display: none; margin: 0 16px 14px; padding: 12px; border: 1px solid rgba(255,255,255,.08);
                     border-radius: 8px; background: rgba(255,255,255,.025); }
     .capture-note.saved { display: block; }
-    .saved-label { color: #77e5c8; font-size: 12px; font-weight: 550; }
+    .saved-label { color: #e28b6e; font-size: 12px; font-weight: 550; }
     .saved-title { margin: 3px 0 9px; overflow: hidden; color: rgba(232,236,242,.55); font-size: 11px;
                    text-overflow: ellipsis; white-space: nowrap; }
     .note-prompt { display: block; margin-bottom: 5px; color: rgba(232,236,242,.78); font-size: 11.5px;
@@ -51,20 +51,20 @@
     .note-form { display: flex; gap: 6px; }
     .note-input { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid rgba(255,255,255,.10); border-radius: 6px;
                   outline: 0; color: #e8ecf2; background: rgba(0,0,0,.18); font: inherit; font-size: 11.5px; }
-    .note-input:focus { border-color: rgba(52,216,176,.45); }
-    .note-save { padding: 6px 9px; border: 0; border-radius: 6px; color: #07120f; background: #6cddbf;
+    .note-input:focus { border-color: rgba(216,90,48,.52); }
+    .note-save { padding: 6px 9px; border: 0; border-radius: 6px; color: #fff7f3; background: #d85a30;
                  font: inherit; font-size: 11px; cursor: pointer; }
     .note-save:disabled { opacity: .5; cursor: default; }
     .note-message { min-height: 16px; margin-top: 5px; color: rgba(232,236,242,.45); font-size: 10.5px; }
     .resurface-setting { margin: 0 16px 14px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.06); }
     .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #d7dce4;
                   font-size: 11.5px; cursor: pointer; }
-    .toggle-row input { accent-color: #6cddbf; }
+    .toggle-row input { accent-color: #d85a30; }
     .privacy { margin: 5px 24px 0 0; color: rgba(232,236,242,.38); font-size: 10px; line-height: 1.4; }
-    .resurfaced { display: none; margin: 0 16px 14px; padding: 11px; border: 1px solid rgba(108,140,255,.22);
-                  border-radius: 8px; background: rgba(108,140,255,.055); }
+    .resurfaced { display: none; margin: 0 16px 14px; padding: 11px; border: 1px solid rgba(216,90,48,.24);
+                  border-radius: 8px; background: rgba(216,90,48,.06); }
     .resurfaced.visible { display: block; }
-    .resurfaced-title { margin-bottom: 6px; color: #a9b9ff; font-size: 11px; font-weight: 600; }
+    .resurfaced-title { margin-bottom: 6px; color: #df9177; font-size: 11px; font-weight: 600; }
     .resurfaced-item { display: block; width: 100%; padding: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,.055);
                        color: inherit; background: transparent; text-align: left; cursor: pointer; }
     .resurfaced-item:first-of-type { border-top: 0; }
@@ -79,7 +79,7 @@
   <div class="head">
     <img src="icons/icon48.png" alt="" />
     <div>
-      <div class="wordmark">ORBIT</div>
+      <div class="wordmark">FOOTNOTE</div>
       <div class="sub">knowledge capture</div>
     </div>
   </div>

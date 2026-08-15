@@ -1,7 +1,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
-  else root.OrbitRecall = api;
+  else root.FootnoteRecall = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   function createSearchRunner({ search, onSearching, onResults, onError, delay = 220 }) {
     let timer = null;

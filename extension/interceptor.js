@@ -5,7 +5,7 @@
   const BOOKMARK_OPERATION = "CreateBookmark";
 
   const tweetCache = new Map();
-  console.log(`[Orbit] Memory cache initialized. Size: ${tweetCache.size}`);
+  console.log(`[Footnote] Memory cache initialized. Size: ${tweetCache.size}`);
 
   const originalFetch = window.fetch;
   window.fetch = async function (input, init) {
@@ -19,7 +19,7 @@
         const cachedTweet = tweetCache.get(tweetId);
         if (cachedTweet) {
           const payload = normalizeTweetPayload(cachedTweet);
-          window.postMessage({ source: "orbit-interceptor", type: "bookmark-captured", payload }, "*");
+          window.postMessage({ source: "footnote-interceptor", type: "bookmark-captured", payload }, "*");
         }
       }
     }
@@ -28,7 +28,7 @@
       const clonedResponse = response.clone();
       const json = await clonedResponse.json();
       const tweetsFound = extractAndCacheTweets(json);
-      if (tweetsFound > 0) console.log(`[Orbit] Cached ${tweetsFound} tweet(s)`);
+      if (tweetsFound > 0) console.log(`[Footnote] Cached ${tweetsFound} tweet(s)`);
     } catch (err) {}
     return response;
   };
@@ -36,12 +36,12 @@
   const originalXHROpen = XMLHttpRequest.prototype.open;
   const originalXHRSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.open = function (method, url) {
-    this._orbitUrl = url;
+    this._footnoteUrl = url;
     return originalXHROpen.apply(this, arguments);
   };
   XMLHttpRequest.prototype.send = function (body) {
     const xhr = this;
-    const url = xhr._orbitUrl || "";
+    const url = xhr._footnoteUrl || "";
     if (url.includes(GRAPHQL_URL) || url.includes(TIMELINE_URL) || url.includes(DETAIL_URL) || url.includes(BOOKMARK_OPERATION)) {
       if (url.includes(BOOKMARK_OPERATION)) {
         const tweetId = extractTweetIdFromXhrBody(body);
@@ -49,7 +49,7 @@
           const cachedTweet = tweetCache.get(tweetId);
           if (cachedTweet) {
             const payload = normalizeTweetPayload(cachedTweet);
-            window.postMessage({ source: "orbit-interceptor", type: "bookmark-captured", payload }, "*");
+            window.postMessage({ source: "footnote-interceptor", type: "bookmark-captured", payload }, "*");
           }
         }
       }
@@ -57,7 +57,7 @@
         try {
           const json = JSON.parse(xhr.responseText);
           const tweetsFound = extractAndCacheTweets(json);
-          if (tweetsFound > 0) console.log(`[Orbit] Cached ${tweetsFound} tweet(s) from XHR`);
+          if (tweetsFound > 0) console.log(`[Footnote] Cached ${tweetsFound} tweet(s) from XHR`);
         } catch (err) {}
       });
     }
@@ -186,5 +186,5 @@
     };
   }
   
-  console.log("[Orbit] Stable Fetch interceptor injected.");
+  console.log("[Footnote] Stable Fetch interceptor injected.");
 })();

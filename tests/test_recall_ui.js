@@ -26,9 +26,9 @@ test("exact and semantic results retain useful human-facing context", () => {
 test("result payloads may carry a distinct user note without affecting URL behavior", () => {
   const result = {
     source_url: "https://example.com/memory",
-    user_note: "use this for Orbit onboarding",
+    user_note: "use this for Footnote onboarding",
   };
-  assert.equal(result.user_note, "use this for Orbit onboarding");
+  assert.equal(result.user_note, "use this for Footnote onboarding");
   assert.equal(resultUrl(result), "https://example.com/memory");
 });
 

@@ -31,24 +31,24 @@ script.onload = function () {
 
 window.addEventListener("message", (event) => {
   // Ignore messages from other sources
-  if (!event.data || event.data.source !== "orbit-interceptor") return;
+  if (!event.data || event.data.source !== "footnote-interceptor") return;
   if (event.data.type !== "bookmark-captured") return;
 
   const payload = event.data.payload;
   if (!payload) return;
 
-  console.log("[Orbit Bridge] Forwarding payload to background:", payload.source_url);
+  console.log("[Footnote Bridge] Forwarding payload to background:", payload.source_url);
 
   chrome.runtime.sendMessage(
     { type: "BOOKMARK_CAPTURED", payload },
     (response) => {
       if (chrome.runtime.lastError) {
-        console.warn("[Orbit Bridge] Background script error:", chrome.runtime.lastError.message);
+        console.warn("[Footnote Bridge] Background script error:", chrome.runtime.lastError.message);
         return;
       }
-      console.log("[Orbit Bridge] Background acknowledged:", response);
+      console.log("[Footnote Bridge] Background acknowledged:", response);
     }
   );
 });
 
-console.log("[Orbit] Content script bridge loaded on:", window.location.hostname);
+console.log("[Footnote] Content script bridge loaded on:", window.location.hostname);

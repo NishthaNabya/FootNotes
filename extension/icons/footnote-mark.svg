@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Footnote mark</title>
+  <g fill="none" stroke="#D85A30" stroke-width="14" stroke-linecap="round">
+    <path d="M20 64h88"/>
+    <path d="M42 26l44 76"/>
+    <path d="M86 26l-44 76"/>
+  </g>
+</svg>

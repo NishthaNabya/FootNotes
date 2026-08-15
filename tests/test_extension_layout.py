@@ -12,6 +12,7 @@ class ExtensionLayoutTests(unittest.TestCase):
         expected = {
             "background.js",
             "content.js",
+            "icons/footnote-mark.svg",
             "icons/icon16.png",
             "icons/icon32.png",
             "icons/icon48.png",

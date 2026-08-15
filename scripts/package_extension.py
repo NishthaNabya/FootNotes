@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the clean Chrome Web Store-ready Orbit extension ZIP."""
+"""Create the clean Chrome Web Store-ready Footnote extension ZIP."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ ALLOWED = {
     "background.js", "content.js", "interceptor.js", "manifest.json",
     "page-context-state.js", "page-context.js", "popup.html", "popup.js",
     "recall-state.js", "recall.css", "recall.html", "recall.js",
-    "icons/icon16.png", "icons/icon32.png", "icons/icon48.png", "icons/icon128.png",
+    "icons/footnote-mark.svg", "icons/icon16.png", "icons/icon32.png",
+    "icons/icon48.png", "icons/icon128.png",
 }
 
 
@@ -32,7 +33,7 @@ def validate() -> dict:
 def package() -> Path:
     manifest = validate()
     DIST.mkdir(exist_ok=True)
-    target = DIST / f"orbit-extension-{manifest['version']}.zip"
+    target = DIST / f"footnote-extension-{manifest['version']}.zip"
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for relative in sorted(ALLOWED):
             info = zipfile.ZipInfo(relative, date_time=(2026, 1, 1, 0, 0, 0))

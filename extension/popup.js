@@ -1,10 +1,10 @@
 // popup.js — Shows whether the local server is reachable and what's in the vault.
 //
-// This exists because every other signal Orbit produced was a console.log. If
+// This exists because every other signal Footnote produced was a console.log. If
 // the Python server wasn't running, bookmarking a tweet did nothing visible
 // anywhere, and there was no way to tell a broken install from an idle one.
 
-const ORBIT_SERVER = "http://localhost:8000";
+const FOOTNOTE_SERVER = "http://localhost:8000";
 
 const el = (id) => document.getElementById(id);
 
@@ -43,7 +43,7 @@ function renderResurfaced(entries) {
   if (!entries.length) return;
   const heading = document.createElement("div");
   heading.className = "resurfaced-title";
-  heading.textContent = `Orbit · ${entries.length}`;
+  heading.textContent = `Footnote · ${entries.length}`;
   section.append(heading);
   entries.forEach((entry) => {
     const item = document.createElement("button");
@@ -137,7 +137,7 @@ el("noteForm").addEventListener("submit", async (event) => {
   el("noteMessage").textContent = "Saving…";
   try {
     const response = await fetch(
-      `${ORBIT_SERVER}/entries/${encodeURIComponent(recentCapture.entry_id)}/note`,
+      `${FOOTNOTE_SERVER}/entries/${encodeURIComponent(recentCapture.entry_id)}/note`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -150,7 +150,7 @@ el("noteForm").addEventListener("submit", async (event) => {
     await chrome.storage.local.set({ recentCapture });
     el("noteMessage").textContent = note ? "Thought saved." : "Thought cleared.";
   } catch {
-    el("noteMessage").textContent = "Couldn’t save. Is Orbit running?";
+    el("noteMessage").textContent = "Couldn’t save. Is Footnote running?";
   } finally {
     button.disabled = false;
   }
@@ -161,7 +161,7 @@ async function refresh() {
 
   let health;
   try {
-    const res = await fetch(`${ORBIT_SERVER}/health`, {
+    const res = await fetch(`${FOOTNOTE_SERVER}/health`, {
       signal: AbortSignal.timeout(2500),
     });
     if (!res.ok) throw new Error(String(res.status));
@@ -169,8 +169,8 @@ async function refresh() {
   } catch {
     setStatus(
       "bad",
-      "Orbit isn’t running",
-      `Open the Orbit app, then try again.` +
+      "Footnote isn’t running",
+      `Open the Footnote app, then try again.` +
         (queued
           ? `<br><br>${queued} capture${queued === 1 ? "" : "s"} waiting — they'll send automatically once it's up.`
           : "")
@@ -216,10 +216,10 @@ async function refresh() {
     setStatus(
       "warn",
       "Connected — local features ready",
-      `Captures and exact Recall work. Open the Orbit app to check ${providerName === "ollama" ? "Local AI" : "your intelligence mode"}.`
+      `Captures and exact Recall work. Open the Footnote app to check ${providerName === "ollama" ? "Local AI" : "your intelligence mode"}.`
     );
   } else {
-    setStatus("ok", "Connected", "Bookmark on X, or right-click → Save to Orbit.");
+    setStatus("ok", "Connected", "Bookmark on X, or right-click → Save to Footnote.");
   }
 }
 

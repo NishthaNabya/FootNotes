@@ -1,4 +1,4 @@
-"""Orbit's small local lifecycle entry point (source and bundled runtime)."""
+"""Footnote's small local lifecycle entry point (source and bundled runtime)."""
 
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from orbit_config import app_support_dir, logs_dir
+from footnote_config import app_support_dir, logs_dir
 
 
 HOST = "127.0.0.1"
-PORT = int(os.getenv("ORBIT_PORT", "8000"))
+PORT = int(os.getenv("FOOTNOTE_PORT", "8000"))
 BASE_URL = f"http://localhost:{PORT}"
 
 
@@ -31,7 +31,7 @@ def runtime_command(*arguments: str) -> list[str]:
 
 
 def pid_path() -> Path:
-    return app_support_dir() / "orbit.pid"
+    return app_support_dir() / "footnote.pid"
 
 
 def lock_path() -> Path:
@@ -39,14 +39,14 @@ def lock_path() -> Path:
 
 
 def log_path() -> Path:
-    return logs_dir() / "orbit.log"
+    return logs_dir() / "footnote.log"
 
 
 def health(timeout: float = 1.0) -> dict | None:
     try:
         with urllib.request.urlopen(f"{BASE_URL}/health", timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
-            return body if body.get("service") == "orbit" else None
+            return body if body.get("service") == "footnote" else None
     except (OSError, ValueError, urllib.error.URLError):
         return None
 
@@ -57,7 +57,7 @@ def port_is_in_use() -> bool:
         return connection.connect_ex((HOST, PORT)) == 0
 
 
-def wait_for_orbit(seconds: float) -> dict | None:
+def wait_for_footnote(seconds: float) -> dict | None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         current = health(timeout=0.3)
@@ -70,7 +70,7 @@ def wait_for_orbit(seconds: float) -> dict | None:
 def show_error(message: str) -> None:
     if sys.platform == "darwin":
         subprocess.run(
-            ["/usr/bin/osascript", "-e", f'display alert "Orbit could not start" message {json.dumps(message)}'],
+            ["/usr/bin/osascript", "-e", f'display alert "Footnote could not start" message {json.dumps(message)}'],
             capture_output=True,
             timeout=15,
         )
@@ -79,7 +79,7 @@ def show_error(message: str) -> None:
 
 
 def open_status() -> None:
-    webbrowser.open(f"{BASE_URL}/orbit")
+    webbrowser.open(f"{BASE_URL}/footnote")
 
 
 def start(open_browser: bool = True) -> int:
@@ -91,13 +91,13 @@ def start(open_browser: bool = True) -> int:
     if port_is_in_use():
         # A nearly-complete first launch can own the port before /health is
         # ready. Give it a moment so a double-click remains harmless.
-        if wait_for_orbit(3):
+        if wait_for_footnote(3):
             if open_browser:
                 open_status()
             return 0
         message = (
             f"Port {PORT} is already being used by another application. "
-            "Quit that application or change its port, then open Orbit again."
+            "Quit that application or change its port, then open Footnote again."
         )
         show_error(message)
         return 2
@@ -120,7 +120,7 @@ def start(open_browser: bool = True) -> int:
                 open_status()
             return 0
         time.sleep(0.2)
-    message = f"Orbit did not start. Details are in {log_path()}."
+    message = f"Footnote did not start. Details are in {log_path()}."
     show_error(message)
     return 1
 
@@ -134,7 +134,7 @@ def serve() -> int:
         return 0
     pid_path().write_text(f"{os.getpid()}\n", encoding="utf-8")
     os.chmod(pid_path(), 0o600)
-    os.environ["ORBIT_PRODUCT_MODE"] = "1"
+    os.environ["FOOTNOTE_PRODUCT_MODE"] = "1"
     try:
         import uvicorn
         import server
@@ -158,7 +158,7 @@ def stop() -> int:
     try:
         pid = int(pid_path().read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
-        show_error(f"Orbit is running, but its process record is missing. See {log_path()}.")
+        show_error(f"Footnote is running, but its process record is missing. See {log_path()}.")
         return 1
     os.kill(pid, signal.SIGTERM)
     deadline = time.monotonic() + 10
@@ -166,18 +166,18 @@ def stop() -> int:
         if not health(timeout=0.3):
             return 0
         time.sleep(0.2)
-    show_error(f"Orbit did not stop cleanly. See {log_path()}.")
+    show_error(f"Footnote did not stop cleanly. See {log_path()}.")
     return 1
 
 
 def status() -> int:
     current = health()
-    print(json.dumps(current or {"status": "stopped", "service": "orbit"}, indent=2))
+    print(json.dumps(current or {"status": "stopped", "service": "footnote"}, indent=2))
     return 0 if current else 1
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Start and manage the local Orbit service.")
+    parser = argparse.ArgumentParser(description="Start and manage the local Footnote service.")
     subparsers = parser.add_subparsers(dest="command")
     start_parser = subparsers.add_parser("start")
     start_parser.add_argument("--no-open", action="store_true")

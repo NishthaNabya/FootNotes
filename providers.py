@@ -1,4 +1,4 @@
-"""Provider-neutral intelligence boundary for Orbit.
+"""Provider-neutral intelligence boundary for Footnote.
 
 Providers own health, enrichment, and embeddings. The memory pipeline owns
 durable Markdown, canonical embedding input, and derived vector persistence.
@@ -119,14 +119,14 @@ class OllamaProvider:
                     (self.enrichment_model, self._enrichment_ready),
                 ) if not ready
             ]
-            message = "Local AI is ready." if not missing else "Ollama is running, but Orbit's models need to be downloaded."
+            message = "Local AI is ready." if not missing else "Ollama is running, but Footnote's models need to be downloaded."
             self._last_health = self._health(message, missing)
         except (httpx.HTTPError, ValueError, TypeError):
             self._runtime_available = False
             self._embedding_ready = False
             self._enrichment_ready = False
             self._last_health = self._health(
-                "Ollama is not running. Start Ollama, then reopen Orbit."
+                "Ollama is not running. Start Ollama, then reopen Footnote."
             )
         return dict(self._last_health)
 
