@@ -59,7 +59,6 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
             "INGEST_LOG_DB": server.INGEST_LOG_DB,
             "VIDEOS_DIR": server.VIDEOS_DIR,
             "embedding_provider": server.embedding_provider,
-            "gemini_available": server.gemini_available,
             "ingest_queue": server.ingest_queue,
             "resurface_cache": server.resurface_cache,
         }
@@ -68,7 +67,6 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
         server.VIDEOS_DIR = self.root / "videos"
         server.VIDEOS_DIR.mkdir()
         server.embedding_provider = FakeEmbeddingProvider()
-        server.gemini_available = False
         server.ingest_queue = asyncio.Queue()
         server.resurface_cache = {}
         server.init_ingest_log()

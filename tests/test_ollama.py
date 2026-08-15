@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,7 +103,7 @@ class OllamaMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.originals = {
             name: getattr(server, name) for name in (
                 "VAULT_DIR", "INGEST_LOG_DB", "VIDEOS_DIR", "embedding_provider",
-                "intelligence_provider", "gemini_available", "provider_health",
+                "intelligence_provider", "provider_health",
                 "ingest_queue", "resurface_cache",
             )
         }
@@ -115,7 +116,6 @@ class OllamaMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self.provider.check_health()
         server.intelligence_provider = self.provider
         server.embedding_provider = self.provider
-        server.gemini_available = False
         server.ingest_queue = asyncio.Queue()
         server.resurface_cache = {}
         server.init_ingest_log()
@@ -185,7 +185,7 @@ class OllamaMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(server.load_vault_entries()[0]["content"], "Durable content")
         await failed._client.aclose()
 
-    async def test_switching_providers_preserves_each_vector_family(self):
+    async def test_obsolete_provider_rows_do_not_interfere_with_ollama(self):
         entry = await self.save(
             "switch", "Switch safely", "Ambient product design.",
             "https://example.com/switch",
@@ -193,19 +193,26 @@ class OllamaMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         ollama_row = server._embedding_row(entry["id"])
         self.assertEqual(ollama_row[0], "ollama")
 
-        class GeminiFake:
-            name, model, dimensions = "gemini", "gemini-embedding-001", 4
-            available = enrichment_available = True
-            async def embed_document(self, text, title=""): return [0.0, 0.0, 1.0, 0.0]
-            async def embed_query(self, text): return [0.0, 0.0, 1.0, 0.0]
-        server.embedding_provider = GeminiFake()
-        await server.ensure_entry_embedding(entry)
-        gemini_row = server._embedding_row(entry["id"])
-        self.assertEqual(gemini_row[0], "gemini")
+        now = "2026-08-12T12:00:00+00:00"
+        connection = sqlite3.connect(str(server.INGEST_LOG_DB))
+        connection.execute(
+            "INSERT INTO memory_embeddings "
+            "(entry_id, provider, model, dimensions, content_hash, vector_json, "
+            "status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry["id"], "gemini", "gemini-embedding-001", 4,
+                "obsolete", "[0,0,1,0]", "ready", None, now, now,
+            ),
+        )
+        connection.commit()
+        connection.close()
 
-        server.embedding_provider = self.provider
         self.assertEqual(server.embedding_state(entry), "ready")
         self.assertEqual(server._embedding_row(entry["id"])[0], "ollama")
+        ranked = await server.hybrid_recall(
+            server.load_vault_entries(), "ambient product"
+        )
+        self.assertEqual(ranked[0]["id"], entry["id"])
 
 
 if __name__ == "__main__":

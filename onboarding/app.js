@@ -44,7 +44,7 @@ function showSetup(data = {}) {
 function showStatus(data) {
   $("loading").classList.add("hidden"); $("setup").classList.add("hidden"); $("status").classList.remove("hidden");
   $("statusVault").textContent = data.vault_path;
-  const names = { ollama:"Local AI · Ollama", gemini:"Gemini", none:"No AI" };
+  const names = { ollama:"Local AI · Ollama", none:"No AI" };
   const health = data.provider_health || {};
   $("statusProvider").textContent = names[data.provider] || data.provider;
   $("statusProviderHealth").textContent = health.message || (data.provider_available ? "Connected" : "Unavailable — local features still work");
@@ -72,7 +72,7 @@ $("finish").addEventListener("click", async () => {
   const button = $("finish"), message = $("setupMessage"); button.disabled = true; message.className="message"; message.textContent="Saving locally…";
   try {
     const provider = document.querySelector("input[name=provider]:checked").value;
-    await api("/orbit-api/setup", { method:"POST", body:JSON.stringify({ vault_path:$("vaultPath").value, provider, api_key:"" }) });
+    await api("/orbit-api/setup", { method:"POST", body:JSON.stringify({ vault_path:$("vaultPath").value, provider }) });
     state = await api("/orbit-api/setup"); showStatus(state);
   } catch (error) { message.className="message error"; message.textContent=error.message; } finally { button.disabled=false; }
 });

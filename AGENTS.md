@@ -8,7 +8,7 @@ Orbit is an open, local-first memory layer for the internet. Its loop is **Captu
 - `extension/interceptor.js` → `extension/content.js` → `extension/background.js`: X bookmark interception, context-menu capture, and the Chrome-local retry queue.
 - `extension/page-context-state.js` → `extension/page-context.js` → `POST /resurface`: opt-in, bounded, ephemeral public-page matching.
 - `server.py`: FastAPI ingestion, extraction, enrichment, Markdown persistence, SQLite metadata, Related links, and retrieval.
-- `providers.py`: provider-neutral health/enrichment/embedding boundary. Public v0.1 uses Ollama; legacy Gemini support is internal compatibility only.
+- `providers.py`: provider-neutral health/enrichment/embedding boundary. Public v0.1 supports Ollama and No AI.
 - `orbit_config.py`, `orbit_app.py`, `onboarding/`: packaged local settings/Keychain, lifecycle, and first-run/status UI.
 - `scripts/`: allowlisted extension packaging and the macOS app release build.
 - `backfill.py`, `backfill_embeddings.py`, `migrate_to_obsidian.py`: safe maintenance and migrations.

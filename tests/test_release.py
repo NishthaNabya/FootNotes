@@ -1,6 +1,9 @@
 import asyncio
 import json
 import os
+import re
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -24,14 +27,12 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.env = patch.dict(os.environ, {
             "ORBIT_CONFIG_DIR": str(self.root / "config"),
             "ORBIT_LOG_DIR": str(self.root / "logs"),
-            "ORBIT_SECRET_BACKEND": "test-file",
         })
         self.env.start()
         self.originals = {
             name: getattr(server, name) for name in (
                 "VAULT_DIR", "INGEST_LOG_DB", "VIDEOS_DIR", "LEGACY_BOOKMARKS_FILE",
-                "LEGACY_TRANSCRIPTS_FILE", "GEMINI_API_KEY", "gemini_client",
-                "gemini_available", "embedding_provider", "intelligence_provider",
+                "LEGACY_TRANSCRIPTS_FILE", "embedding_provider", "intelligence_provider",
                 "provider_health", "ACTIVE_PROVIDER_NAME",
             )
         }
@@ -66,35 +67,43 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(memory.read_text(encoding="utf-8"), original)
 
-    async def test_legacy_gemini_key_is_secret_and_preserved_by_local_setup(self):
-        key = "not-a-real-key-SENSITIVE"
-        orbit_config.store_gemini_key(key)
-        result = await server.save_setup(
-            server.SetupUpdate(vault_path=str(self.root / "vault"), provider="none"),
-            FakeRequest(),
-        )
-        config_text = orbit_config.config_path().read_text(encoding="utf-8")
-        self.assertNotIn(key, config_text)
-        self.assertEqual(orbit_config.load_gemini_key(), key)
-        self.assertIn("exact Recall", result["message"])
-
-    def test_no_ai_product_config_ignores_developer_environment_key(self):
-        orbit_config.save_config(orbit_config.OrbitConfig(
-            setup_complete=True, vault_path=str(self.root / "vault"), provider="none"
-        ))
-        with patch.dict(os.environ, {"GEMINI_API_KEY": "must-not-be-used"}):
-            self.assertEqual(orbit_config.configured_api_key(), "")
-
-    def test_legacy_gemini_config_remains_readable_for_safe_upgrade(self):
-        orbit_config.save_config(orbit_config.OrbitConfig(
-            setup_complete=True, vault_path=str(self.root / "vault"), provider="gemini"
-        ))
+    def test_removed_provider_config_migrates_to_no_ai(self):
+        path = orbit_config.config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "version": 2,
+            "setup_complete": True,
+            "vault_path": str(self.root / "vault"),
+            "provider": "gemini",
+        }), encoding="utf-8")
         loaded = orbit_config.load_config()
-        self.assertEqual(loaded.provider, "gemini")
+        self.assertEqual(loaded.provider, "none")
         self.assertEqual(loaded.resolved_vault_path, self.root / "vault")
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("ORBIT_INTELLIGENCE_PROVIDER", None)
-            self.assertEqual(server.selected_provider_name(loaded, True), "ollama")
+        self.assertEqual(json.loads(path.read_text())["provider"], "none")
+        with patch.dict(os.environ, {"ORBIT_INTELLIGENCE_PROVIDER": ""}):
+            self.assertEqual(server.selected_provider_name(loaded), "none")
+
+    def test_existing_enriched_markdown_remains_readable(self):
+        vault = self.root / "historic-vault"
+        memory = vault / "articles" / "historic.md"
+        memory.parent.mkdir(parents=True)
+        memory.write_text(
+            "---\nid: historic\ntype: article\n"
+            "source_url: https://example.com/historic\nsource_platform: other\n"
+            "author: ''\nauthor_handle: ''\ntitle: Historic memory\n"
+            "captured_at: '2025-01-01T00:00:00+00:00'\npublished_at: null\n"
+            "user_note: null\ntags: [local-first]\nsummary: Existing summary\n"
+            "key_insights: [Existing insight]\nstatus: enriched\n---\n\n"
+            "## Content\n\nOriginal captured body.\n\n## Context\n\n"
+            "- **Original URL:** https://example.com/historic\n"
+            "- **Captured:** 2025-01-01T00:00:00+00:00\n"
+            "- **Platform:** other\n",
+            encoding="utf-8",
+        )
+        server.configure_runtime(vault, "none")
+        entry = server.load_vault_entries()[0]
+        self.assertEqual(entry["content"], "Original captured body.")
+        self.assertEqual(entry["summary"], "Existing summary")
 
     async def test_provider_outage_keeps_capture_and_lexical_recall_available(self):
         server.configure_runtime(self.root / "outage-vault", "none")
@@ -133,9 +142,10 @@ class LauncherAndPackagingTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1] / "onboarding"
         html = (root / "index.html").read_text(encoding="utf-8")
         script = (root / "app.js").read_text(encoding="utf-8")
-        self.assertIn('value="ollama"', html)
-        self.assertIn('value="none"', html)
-        self.assertNotIn('value="gemini"', html)
+        self.assertEqual(
+            set(re.findall(r'name="provider" value="([^"]+)"', html)),
+            {"ollama", "none"},
+        )
         self.assertIn("about <b>2 GB</b> total", script)
         self.assertIn('embeddinggemma:"about 622 MB"', script)
         self.assertIn('"qwen3:1.7b":"about 1.4 GB"', script)
@@ -167,6 +177,33 @@ class LauncherAndPackagingTests(unittest.TestCase):
             self.assertFalse(any("__pycache__" in name or name.startswith("tests/") for name in names))
             manifest = json.loads(archive.read("manifest.json"))
             self.assertEqual(manifest["version"], "0.1.0")
+
+    def test_runtime_imports_without_google_sdk(self):
+        root = Path(__file__).resolve().parents[1]
+        script = """
+import builtins
+original_import = builtins.__import__
+def blocked(name, *args, **kwargs):
+    if name == 'google' or name.startswith('google.'):
+        raise AssertionError('cloud SDK import attempted')
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = blocked
+import providers
+import server
+assert server.intelligence_provider.name in {'ollama', 'none'}
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script], cwd=root,
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_runtime_requirements_and_packager_exclude_google_ai(self):
+        root = Path(__file__).resolve().parents[1]
+        dependency = "-".join(("google", "genai"))
+        self.assertNotIn(dependency, (root / "requirements.txt").read_text().lower())
+        packager = (root / "scripts" / "build_macos_release.py").read_text()
+        self.assertIn("forbidden_module_paths", packager)
 
     def test_uninstall_documentation_explicitly_preserves_memory_folder(self):
         release = (Path(__file__).resolve().parents[1] / "RELEASE.md").read_text(encoding="utf-8")

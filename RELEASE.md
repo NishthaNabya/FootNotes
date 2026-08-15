@@ -36,9 +36,7 @@ work around that security boundary.
   canonical; `ingest.log` in the same folder contains rebuildable metadata and
   embeddings.
 - Settings: `~/Library/Application Support/Orbit/config.json`.
-- Legacy Gemini key, if present from an older build: macOS Keychain service
-  `com.orbit.memory`. It remains inactive and is preserved during upgrade.
-- Logs: `~/Library/Logs/Orbit/orbit.log` (the key is never logged).
+- Logs: `~/Library/Logs/Orbit/orbit.log`.
 
 ## Upgrade
 
@@ -47,8 +45,11 @@ move or delete the selected memory folder or Application Support settings.
 Database migrations are additive. Missing/stale embeddings are repaired in
 small resumable background batches and never block startup.
 
-Switching an upgraded installation from legacy Gemini to Local AI does not
-delete Gemini vectors. Ollama creates its own provider/model rows incrementally.
+An upgraded configuration naming an unsupported provider is migrated to No AI,
+so startup, Capture, and lexical Recall remain available. The user can choose
+Local AI from Orbit's setup surface when Ollama is ready. Historical embedding
+rows for other providers remain inert derived data; Ollama creates its own rows
+incrementally without rewriting Markdown.
 
 To bring an older source checkout vault into the app, choose that existing
 `vault/` directory during first-run setup. Orbit uses the files in place; it
@@ -58,12 +59,19 @@ does not copy, rename, or rewrite them merely because they were selected.
 
 Stop Orbit and move `/Applications/Orbit.app` to Trash. Remove the Chrome
 extension normally. This intentionally leaves the memory folder, settings,
-derived SQLite data, and Keychain item in place so reinstalling is safe.
+and derived SQLite data in place so reinstalling is safe.
 
 If the user explicitly wants a complete settings cleanup, they may separately
-remove `~/Library/Application Support/Orbit`, `~/Library/Logs/Orbit`, and the
-`com.orbit.memory` Keychain item. Never remove the chosen memory folder unless
-the user separately decides to delete their memories.
+remove `~/Library/Application Support/Orbit` and `~/Library/Logs/Orbit`.
+Orbit does not automatically delete credentials stored by older builds. The
+obsolete Keychain credential, if present, can be removed manually with:
+
+```bash
+security delete-generic-password -s com.orbit.memory -a gemini-api-key
+```
+
+Never remove the chosen memory folder unless the user separately decides to
+delete their memories.
 
 ## Build from source
 

@@ -361,8 +361,6 @@ memory remains theirs.
   the degraded fallback.
 - Generated Obsidian wikilinks use exact tag overlap. Semantic Related remains
   derived and is not materialized as a graph.
-- Legacy Gemini support remains internal for safe upgrades, but it is not a
-  public v0.1 onboarding option.
 
 ## License
 

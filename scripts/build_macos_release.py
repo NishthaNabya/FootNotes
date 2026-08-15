@@ -19,10 +19,19 @@ VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 def verify_release_tree(app: Path) -> None:
     forbidden = {".env", ".venv", "vault", "tests", "__pycache__"}
+    forbidden_module_paths = {("google", "genai")}
     for path in app.rglob("*"):
-        relative_parts = set(path.relative_to(app).parts)
+        ordered_parts = path.relative_to(app).parts
+        relative_parts = set(ordered_parts)
         if forbidden & relative_parts or path.suffix == ".pyc":
             raise SystemExit(f"Forbidden development/user file in app: {path}")
+        lowered = tuple(part.lower() for part in ordered_parts)
+        if any(
+            lowered[index:index + len(module_path)] == module_path
+            for module_path in forbidden_module_paths
+            for index in range(len(lowered) - len(module_path) + 1)
+        ):
+            raise SystemExit(f"Forbidden cloud AI SDK in app: {path}")
 
 
 def build() -> Path:

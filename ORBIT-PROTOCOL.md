@@ -115,8 +115,9 @@ recreate missing, stale, or failed rows incrementally.
 Public v0.1 uses a locally installed Ollama runtime for both enrichment and
 semantic memory. Provider health, structured enrichment, and document/query
 embedding share one narrow contract in `providers.py`; Markdown and retrieval
-do not depend on Ollama. Legacy Gemini vectors remain valid provider-specific
-rows and are never deleted when Local AI becomes active.
+do not depend on Ollama. Rows from unsupported historical providers remain
+inert derived data because current reads and backfill select only the active
+provider and model.
 
 The live pipeline writes Markdown successfully before attempting an embedding.
 Provider failure therefore leaves a readable, lexically searchable memory and a
@@ -358,5 +359,5 @@ One correction to an earlier version of this doc: append-only does *not* mean
 "re-append a new version whenever something changes." Combined with URL-based
 deduplication (§2b), a URL that has already been captured is skipped outright
 rather than written twice. If you need to re-enrich entries that were saved as
-`ingested` — say, after fixing an API key — that's a backfill operation that
-rewrites entries in place, not an append.
+`ingested` — say, after the local provider becomes available — that's a
+backfill operation that rewrites generated metadata in place, not an append.

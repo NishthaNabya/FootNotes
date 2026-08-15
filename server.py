@@ -29,20 +29,15 @@ import yt_dlp
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
-from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field
 from providers import (
-    GeminiProvider,
     NoAIProvider,
     OllamaProvider,
     OLLAMA_EMBEDDING_DIMENSIONS,
 )
 from orbit_config import (
     OrbitConfig,
-    configured_api_key,
     load_config,
-    load_gemini_key,
     save_config,
 )
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -51,25 +46,6 @@ from youtube_transcript_api import YouTubeTranscriptApi
 load_dotenv()
 PRODUCT_MODE = os.getenv("ORBIT_PRODUCT_MODE", "").lower() in ("1", "true", "yes")
 PRODUCT_CONFIG = load_config() if PRODUCT_MODE else None
-
-# ──────────────────────────────────────────────
-# Gemini Client (google-genai SDK)
-# ──────────────────────────────────────────────
-# Uses GEMINI_API_KEY from env. The SDK is client-based, not module-level —
-# one client instance is shared across all calls. Constructing the client does
-# NOT validate the key; that only happens on the first request. See
-# verify_gemini_credentials() below, which probes at startup so a bad key
-# surfaces as a loud log line instead of silently empty enrichment forever.
-GEMINI_API_KEY = configured_api_key(PRODUCT_CONFIG) if PRODUCT_MODE else os.getenv("GEMINI_API_KEY", "").strip()
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-
-# Model selection by content type:
-# - 2.5-flash for text (tweets, articles): fast, cheap, plenty for tag+summary extraction
-# - 2.5-pro for video: the reasoning headroom is worth the cost when analyzing 10+ min of footage
-TEXT_MODEL = "gemini-2.5-flash"
-VIDEO_MODEL = "gemini-2.5-pro"
-EMBEDDING_MODEL = os.getenv("ORBIT_EMBEDDING_MODEL", "gemini-embedding-001")
-EMBEDDING_DIMENSIONS = int(os.getenv("ORBIT_EMBEDDING_DIMENSIONS", "768"))
 
 # ──────────────────────────────────────────────
 # Configuration
@@ -113,8 +89,8 @@ RETRY_DELAY_SECONDS = 5
 # because enrichment cannot analyze a file that hasn't finished writing.
 DOWNLOAD_VIDEOS = os.getenv("ORBIT_DOWNLOAD_VIDEOS", "").lower() in ("1", "true", "yes")
 
-# Gemini's inline text limit is generous but not infinite, and a 3-hour podcast
-# transcript is mostly redundant for tag extraction. Truncate before sending.
+# Long transcripts are mostly redundant for tag extraction. Bound the provider
+# input so local enrichment remains responsive and memory use is predictable.
 MAX_ENRICHMENT_CHARS = 100_000
 
 VAULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -151,7 +127,6 @@ class UserNoteUpdate(BaseModel):
 class SetupUpdate(BaseModel):
     vault_path: str = Field(..., max_length=4096)
     provider: str = Field(default="ollama", pattern="^(none|ollama)$")
-    api_key: str = Field(default="", max_length=500)
 
 
 class PageContext(BaseModel):
@@ -185,12 +160,7 @@ vault_write_lock = asyncio.Lock()
 # Provider concurrency semaphore avoids overwhelming cloud or local runtimes.
 llm_semaphore = asyncio.Semaphore(MAX_WORKER_CONCURRENCY)
 
-# Set by verify_gemini_credentials() at startup. When False we skip the API call
-# entirely rather than burning a round-trip per bookmark to rediscover the same 400.
-gemini_available = False  # compatibility field for existing extension clients
-
-
-def build_intelligence_provider(provider_name: str, api_key: str = ""):
+def build_intelligence_provider(provider_name: str):
     if provider_name == "ollama":
         config = load_config()
         return OllamaProvider(
@@ -199,35 +169,24 @@ def build_intelligence_provider(provider_name: str, api_key: str = ""):
             enrichment_model=os.getenv("ORBIT_OLLAMA_ENRICHMENT_MODEL", config.ollama_enrichment_model),
             dimensions=OLLAMA_EMBEDDING_DIMENSIONS,
         )
-    if provider_name == "gemini":
-        client = genai.Client(api_key=api_key) if api_key else None
-        return GeminiProvider(
-            client,
-            lambda: gemini_available,
-            model=EMBEDDING_MODEL,
-            dimensions=EMBEDDING_DIMENSIONS,
-            enrichment_model=TEXT_MODEL,
-            video_model=VIDEO_MODEL,
-        )
     return NoAIProvider()
 
 
-def selected_provider_name(config: Optional[OrbitConfig], product_mode: bool) -> str:
-    override = os.getenv("ORBIT_INTELLIGENCE_PROVIDER", "").strip()
-    if override:
+def selected_provider_name(config: Optional[OrbitConfig]) -> str:
+    override = os.getenv("ORBIT_INTELLIGENCE_PROVIDER", "").strip().lower()
+    if override in {"ollama", "none"}:
         return override
+    if override:
+        return "none"
     if config is not None:
-        # Public upgrades move legacy cloud mode to Local AI without deleting
-        # its key or provider-specific vectors. Source developers can still
-        # explicitly select the retained adapter via environment configuration.
-        return "ollama" if product_mode and config.provider == "gemini" else config.provider
-    return "gemini" if GEMINI_API_KEY else "none"
+        return config.provider if config.provider in {"ollama", "none"} else "none"
+    return "none"
 
 # Retrieval and persistence depend only on the small provider contract in
 # providers.py. Tests and future local providers can replace this object
 # without changing the vault or search implementation.
-ACTIVE_PROVIDER_NAME = selected_provider_name(PRODUCT_CONFIG, PRODUCT_MODE)
-intelligence_provider = build_intelligence_provider(ACTIVE_PROVIDER_NAME, GEMINI_API_KEY)
+ACTIVE_PROVIDER_NAME = selected_provider_name(PRODUCT_CONFIG)
+intelligence_provider = build_intelligence_provider(ACTIVE_PROVIDER_NAME)
 embedding_provider = intelligence_provider
 provider_health = {
     "provider": ACTIVE_PROVIDER_NAME,
@@ -249,7 +208,7 @@ embedding_reconciliation = {
 }
 
 
-def configure_runtime(vault_path: Path, provider: str, api_key: str = "") -> None:
+def configure_runtime(vault_path: Path, provider: str) -> None:
     """Apply first-run settings without rewriting any existing memory.
 
     This is used only by the local setup surface.  New work immediately uses
@@ -257,8 +216,7 @@ def configure_runtime(vault_path: Path, provider: str, api_key: str = "") -> Non
     only when the user explicitly selects an existing folder.
     """
     global VAULT_DIR, INGEST_LOG_DB, LEGACY_BOOKMARKS_FILE
-    global LEGACY_TRANSCRIPTS_FILE, VIDEOS_DIR, GEMINI_API_KEY
-    global gemini_client, gemini_available, embedding_provider
+    global LEGACY_TRANSCRIPTS_FILE, VIDEOS_DIR, embedding_provider
     global intelligence_provider, provider_health, ACTIVE_PROVIDER_NAME
 
     resolved = Path(vault_path).expanduser().resolve()
@@ -270,12 +228,10 @@ def configure_runtime(vault_path: Path, provider: str, api_key: str = "") -> Non
     VIDEOS_DIR = VAULT_DIR / "videos"
     VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
-    GEMINI_API_KEY = api_key.strip() if provider == "gemini" else ""
-    gemini_available = False
+    provider = provider if provider in {"ollama", "none"} else "none"
     ACTIVE_PROVIDER_NAME = provider
-    intelligence_provider = build_intelligence_provider(provider, GEMINI_API_KEY)
+    intelligence_provider = build_intelligence_provider(provider)
     embedding_provider = intelligence_provider
-    gemini_client = getattr(intelligence_provider, "_client", None) if provider == "gemini" else None
     provider_health = {
         "provider": provider, "runtime_available": False,
         "embedding_ready": False, "enrichment_ready": False,
@@ -880,13 +836,8 @@ ENRICHMENT_PROMPT = """You are a research librarian organizing someone's persona
 Be concrete. Avoid filler like "discusses" or "talks about". If the content is thin, return fewer tags and insights rather than padding."""
 
 
-async def verify_gemini_credentials() -> bool:
-    """Compatibility wrapper; health is owned by the active provider."""
-    return await verify_provider()
-
-
 async def verify_provider() -> bool:
-    global gemini_available, provider_health
+    global provider_health
     try:
         provider_health = await intelligence_provider.check_health()
     except Exception as exc:
@@ -898,7 +849,6 @@ async def verify_provider() -> bool:
             "missing_models": [],
             "message": f"Provider unavailable: {type(exc).__name__}",
         }
-    gemini_available = intelligence_provider.name == "gemini" and intelligence_provider.enrichment_available
     level = logger.info if provider_health.get("enrichment_ready") else logger.warning
     level(f"[Provider:{intelligence_provider.name}] {provider_health.get('message', 'Unavailable')}")
     return bool(provider_health.get("embedding_ready") and provider_health.get("enrichment_ready"))
@@ -2295,7 +2245,6 @@ async def setup_status():
         "setup_complete": config.setup_complete,
         "vault_path": str(VAULT_DIR if PRODUCT_MODE else config.resolved_vault_path),
         "provider": intelligence_provider.name,
-        "provider_has_key": bool(GEMINI_API_KEY or (config.provider == "gemini" and load_gemini_key())),
         "provider_available": bool(provider_health.get("runtime_available")),
         "provider_health": provider_health,
         "service": "running",
@@ -2351,17 +2300,13 @@ async def save_setup(update: SetupUpdate, request: Request):
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Orbit cannot use that folder: {exc}") from exc
 
-    # Public v0.1 is Ollama/No AI only. Preserve any legacy Gemini key just
-    # like existing provider-specific vectors; it remains inactive.
-    api_key = ""
-
     config = OrbitConfig(
         setup_complete=True,
         vault_path=str(vault_path.resolve()),
         provider=update.provider,
     )
     save_config(config)
-    configure_runtime(config.resolved_vault_path, config.provider, api_key)
+    configure_runtime(config.resolved_vault_path, config.provider)
     await verify_provider()
     return {
         "status": "saved",
@@ -2430,7 +2375,6 @@ async def health():
         "service": "orbit",
         "version": app.version,
         "queue_size": ingest_queue.qsize(),
-        "gemini_available": gemini_available,
         "provider_configured": intelligence_provider.name != "none",
         "intelligence_provider": intelligence_provider.name,
         "provider_health": provider_health,

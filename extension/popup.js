@@ -186,8 +186,8 @@ async function refresh() {
 
   const enrich = el("enrich");
   const providerHealth = health.provider_health || {};
-  const providerName = health.intelligence_provider || (health.gemini_available ? "gemini" : "none");
-  if (providerHealth.enrichment_ready || health.gemini_available) {
+  const providerName = health.intelligence_provider || "none";
+  if (providerHealth.enrichment_ready) {
     enrich.textContent = "active";
     enrich.className = "";
   } else if (health.provider_configured) {
@@ -212,7 +212,7 @@ async function refresh() {
 
   el("stats").style.display = "block";
 
-  if (!providerHealth.enrichment_ready && !health.gemini_available) {
+  if (!providerHealth.enrichment_ready) {
     setStatus(
       "warn",
       "Connected — local features ready",
