@@ -1,22 +1,22 @@
 <div align="center">
   <img src="extension/icons/footnote-mark.svg" width="72" alt="Footnote" />
   <h1>Footnote</h1>
-  <p><strong>Your own memory for the web.</strong></p>
+  <p><strong>Make what you save useful later.</strong></p>
 </div>
 
-You find useful things all day: a post you want to revisit, an article that
-changes how you think, a tool you may need later, or a sentence for a project
-you have not started yet.
+The things you find online usually lose their context long before you need them
+again.
 
-You save it. Then, most of the time, it disappears into bookmarks.
+Footnote is an open-source experiment around keeping that context alive.
 
-Footnote is an open-source experiment around a simple question:
+Save something naturally. Add why it mattered if you want. Find it later from
+a half-memory—and, eventually, know when something you relied on has changed.
 
-> **What if the things you chose to remember could come back when they became useful?**
+> **Information without context ages badly. Footnote keeps the context.**
 
-Footnote captures what mattered without asking you to reorganize your browsing,
-keeps it as Markdown on your machine, remembers why you cared when you choose
-to say, and helps you find it again from an incomplete recollection.
+Today, Footnote captures what mattered without asking you to reorganize your
+browsing, keeps it as Markdown on your machine, remembers why you cared when
+you choose to say, and helps you find it again from an incomplete recollection.
 
 It is early v0.1 software. Trying it, breaking it, challenging the idea, and
 contributing retrieval examples are all welcome.
@@ -46,13 +46,14 @@ If you explicitly enable resurfacing, Footnote can also stay alert for a small
 number of unusually relevant memories while you read public webpages. When
 nothing is useful, it stays quiet.
 
-The goal is for remembering to happen as a side effect of using the internet
-normally—not as another knowledge-management routine to maintain.
+The goal is for useful context to survive as a side effect of using the
+internet normally—not as another knowledge-management routine to maintain.
 
 ## Why this exists
 
 Bookmarks, read-later apps, folders, and notes are good at storing things. The
-harder part is what happens afterward.
+harder part is preserving why something mattered and recognizing when it can
+be useful again.
 
 People rarely remember the exact title, wording, date, or application. They
 remember fragments such as:
@@ -64,9 +65,9 @@ remember fragments such as:
 Sometimes they do not remember to search at all.
 
 Footnote is built around **Capture → Connect → Recall**. The interesting problem
-is not how to store more knowledge. It is how something you once learned can
-become useful at the right moment again—without giving up ownership of the
-memory itself.
+is not how to store more knowledge. It is how information you deliberately
+cared about can remain relevant, contextual, and trustworthy over time—without
+giving up ownership of the source or your thinking around it.
 
 ## What works today
 
@@ -190,10 +191,10 @@ become useful again**.
 
 ## Questions, not a roadmap
 
-There are broader memory questions worth investigating: whether old information
-can indicate that it may no longer be safe to rely on, whether context can act
-as a future recall cue, and whether precedent is more useful than surface-level
-similarity.
+There are broader questions worth investigating: whether saved context can
+bring information back when it becomes relevant, whether old information can
+signal that it may no longer be safe to rely on, and whether precedent is more
+useful than surface-level similarity.
 
 None of those are promised v0.1 features. Footnote does not currently monitor
 webpages, track assumptions, detect changes, or generate alerts. They are
@@ -346,9 +347,9 @@ capture, semantic search, local AI, or resurfacing. Related projects include:
 - [Obsidian Web Clipper](https://github.com/obsidianmd/obsidian-clipper)
 - [Khoj](https://github.com/khoj-ai/khoj)
 
-Footnote's narrower question is whether software can make things a person
-deliberately chose to remember useful again at the right moment while the
-memory remains theirs.
+Footnote's narrower question is whether software can keep the things a person
+deliberately cared about connected to why they mattered—and make them useful
+again at the right moment while the underlying information remains theirs.
 
 ## Known limitations
 
