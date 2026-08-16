@@ -107,6 +107,16 @@ class ExtensionLayoutTests(unittest.TestCase):
         self.assertIn("Saved ✓", popup)
         self.assertNotIn("Add a thought…", popup)
 
+    def test_frontend_uses_the_light_minimal_brand_system(self):
+        popup = (EXTENSION_ROOT / "popup.html").read_text(encoding="utf-8")
+        recall = (EXTENSION_ROOT / "recall.css").read_text(encoding="utf-8")
+        onboarding = (REPOSITORY_ROOT / "onboarding" / "style.css").read_text(encoding="utf-8")
+        for source in (popup, recall, onboarding):
+            self.assertIn("color-scheme: light", source)
+            self.assertIn("#d85a30", source.lower())
+            self.assertNotIn("gradient(", source)
+            self.assertNotIn("box-shadow", source)
+
 
 if __name__ == "__main__":
     unittest.main()

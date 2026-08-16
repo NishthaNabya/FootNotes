@@ -3,84 +3,93 @@
 <head>
   <meta charset="utf-8" />
   <style>
-    :root { color-scheme: dark; }
+    :root {
+      color-scheme: light;
+      --paper: #fbfaf7;
+      --surface: #ffffff;
+      --ink: #1d1d1b;
+      --muted: #77736c;
+      --quiet: #a19c93;
+      --line: #e4e0d8;
+      --soft: #f2efe9;
+      --accent: #d85a30;
+      --accent-soft: #f8e9e3;
+      --success: #4e735a;
+      --warning: #a66a22;
+      --danger: #a3443b;
+    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
-      width: 300px;
-      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: #e8ecf2;
-      background:
-        radial-gradient(ellipse at 70% 90%, rgba(216,90,48,0.09) 0%, transparent 55%),
-        radial-gradient(ellipse at 20% 10%, rgba(216,90,48,0.05) 0%, transparent 55%),
-        #0a0e1a;
+      width: 328px;
+      color: var(--ink);
+      background: var(--paper);
+      font: 13px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
     }
-    .head { display: flex; align-items: center; gap: 9px; padding: 14px 16px 12px; }
-    .head img { width: 26px; height: 26px; }
-    .wordmark { letter-spacing: .26em; font-size: 12px; font-weight: 500; }
-    .sub { font-size: 10px; letter-spacing: .16em; color: rgba(232,236,242,.4); }
+    button, input { font: inherit; }
+    button:focus-visible, input:focus-visible { outline: 2px solid rgba(216,90,48,.35); outline-offset: 2px; }
 
-    .status { display: flex; align-items: center; gap: 8px; padding: 11px 16px;
-              border-top: 1px solid rgba(255,255,255,.06); }
-    .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
-    .ok   { background: #d85a30; box-shadow: 0 0 7px #d85a30; }
-    .warn { background: #f5b443; box-shadow: 0 0 7px #f5b443; }
-    .bad  { background: #ff6b6b; box-shadow: 0 0 7px #ff6b6b; }
-    #statusText { font-size: 12px; }
+    .head { display: flex; align-items: center; gap: 10px; padding: 18px 18px 15px; }
+    .head img { width: 25px; height: 25px; }
+    .wordmark { font-size: 14px; font-weight: 680; letter-spacing: -.01em; }
+    .sub { margin-top: 1px; color: var(--quiet); font-size: 10.5px; }
 
-    .hint { padding: 0 16px 13px; font-size: 11px; color: rgba(232,236,242,.5); }
-    .hint code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 4px;
-                 font-size: 10.5px; user-select: all; }
+    .status { display: flex; align-items: center; gap: 8px; margin: 0 18px; padding: 11px 0 5px; border-top: 1px solid var(--line); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+    .ok { background: var(--success); }
+    .warn { background: var(--warning); }
+    .bad { background: var(--danger); }
+    #statusText { font-size: 11.5px; font-weight: 560; }
+    .hint { padding: 0 18px 13px 32px; color: var(--muted); font-size: 10.5px; }
+    .hint code { padding: 1px 4px; border-radius: 4px; background: var(--soft); font-size: 10px; user-select: all; }
 
-    .stats { display: none; padding: 4px 16px 14px; }
-    .row { display: flex; justify-content: space-between; font-size: 11.5px; padding: 3px 0;
-           color: rgba(232,236,242,.65); }
-    .row b { color: #e8ecf2; font-weight: 500; }
-    .muted { color: rgba(232,236,242,.35); }
-    .recall { display: block; margin: 0 16px 14px; padding: 9px 12px; border: 1px solid rgba(216,90,48,.40);
-              border-radius: 7px; color: #f5e4de; background: rgba(216,90,48,.10); text-align: center;
-              font: inherit; text-decoration: none; cursor: pointer; width: calc(100% - 32px); }
-    .recall:hover { background: rgba(216,90,48,.17); }
-    .capture-note { display: none; margin: 0 16px 14px; padding: 12px; border: 1px solid rgba(255,255,255,.08);
-                    border-radius: 8px; background: rgba(255,255,255,.025); }
+    .stats { display: none; margin: 0 18px 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+    .row { display: flex; justify-content: space-between; padding: 3px 0; color: var(--muted); font-size: 10.5px; }
+    .row b { color: var(--ink); font-weight: 560; }
+    .muted { color: var(--quiet) !important; }
+
+    .capture-note { display: none; margin: 0 18px 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
     .capture-note.saved { display: block; }
-    .saved-label { color: #e28b6e; font-size: 12px; font-weight: 550; }
-    .saved-title { margin: 3px 0 9px; overflow: hidden; color: rgba(232,236,242,.55); font-size: 11px;
-                   text-overflow: ellipsis; white-space: nowrap; }
-    .note-prompt { display: block; margin-bottom: 5px; color: rgba(232,236,242,.78); font-size: 11.5px;
-                   font-weight: 500; }
+    .saved-label { color: var(--success); font-size: 11px; font-weight: 650; }
+    .saved-title { margin: 3px 0 12px; overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+    .note-prompt { display: block; margin-bottom: 6px; font-size: 11.5px; font-weight: 620; }
     .note-form { display: flex; gap: 6px; }
-    .note-input { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid rgba(255,255,255,.10); border-radius: 6px;
-                  outline: 0; color: #e8ecf2; background: rgba(0,0,0,.18); font: inherit; font-size: 11.5px; }
-    .note-input:focus { border-color: rgba(216,90,48,.52); }
-    .note-save { padding: 6px 9px; border: 0; border-radius: 6px; color: #fff7f3; background: #d85a30;
-                 font: inherit; font-size: 11px; cursor: pointer; }
-    .note-save:disabled { opacity: .5; cursor: default; }
-    .note-message { min-height: 16px; margin-top: 5px; color: rgba(232,236,242,.45); font-size: 10.5px; }
-    .resurface-setting { margin: 0 16px 14px; padding: 10px 0; border-top: 1px solid rgba(255,255,255,.06); }
-    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #d7dce4;
-                  font-size: 11.5px; cursor: pointer; }
-    .toggle-row input { accent-color: #d85a30; }
-    .privacy { margin: 5px 24px 0 0; color: rgba(232,236,242,.38); font-size: 10px; line-height: 1.4; }
-    .resurfaced { display: none; margin: 0 16px 14px; padding: 11px; border: 1px solid rgba(216,90,48,.24);
-                  border-radius: 8px; background: rgba(216,90,48,.06); }
+    .note-input { min-width: 0; flex: 1; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; outline: 0; color: var(--ink); background: var(--paper); font-size: 11px; transition: border-color 120ms ease, background 120ms ease; }
+    .note-input::placeholder { color: var(--quiet); }
+    .note-input:focus { border-color: rgba(216,90,48,.48); background: #fff; }
+    .note-save { padding: 7px 11px; border: 1px solid var(--ink); border-radius: 8px; color: #fff; background: var(--ink); font-size: 11px; font-weight: 600; cursor: pointer; transition: background 120ms ease; }
+    .note-save:hover { background: #373633; }
+    .note-save:disabled { opacity: .45; cursor: default; }
+    .note-message { min-height: 15px; margin-top: 5px; color: var(--muted); font-size: 10px; }
+
+    .resurface-setting { margin: 0 18px 14px; padding: 12px 0 0; border-top: 1px solid var(--line); }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; font-size: 11px; font-weight: 550; cursor: pointer; }
+    .toggle-row input { appearance: none; width: 30px; height: 18px; margin: 0; padding: 2px; border: 1px solid #cac5bc; border-radius: 999px; background: #ddd9d1; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
+    .toggle-row input::before { content: ""; display: block; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform 140ms ease; }
+    .toggle-row input:checked { border-color: var(--accent); background: var(--accent); }
+    .toggle-row input:checked::before { transform: translateX(12px); }
+    .privacy { margin: 6px 44px 0 0; color: var(--quiet); font-size: 9.5px; line-height: 1.45; }
+
+    .resurfaced { display: none; margin: 0 18px 14px; padding: 11px 12px; border: 1px solid #ead7cf; border-radius: 10px; background: var(--accent-soft); }
     .resurfaced.visible { display: block; }
-    .resurfaced-title { margin-bottom: 6px; color: #df9177; font-size: 11px; font-weight: 600; }
-    .resurfaced-item { display: block; width: 100%; padding: 8px 0; border: 0; border-top: 1px solid rgba(255,255,255,.055);
-                       color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .resurfaced-title { margin-bottom: 4px; color: var(--accent); font-size: 10px; font-weight: 680; }
+    .resurfaced-item { display: block; width: 100%; padding: 8px 0; border: 0; border-top: 1px solid rgba(216,90,48,.13); color: inherit; background: transparent; text-align: left; cursor: pointer; }
     .resurfaced-item:first-of-type { border-top: 0; }
-    .resurfaced-name { overflow: hidden; color: #edf0f5; font-size: 11.5px; font-weight: 550;
-                       text-overflow: ellipsis; white-space: nowrap; }
-    .resurfaced-meta { color: rgba(232,236,242,.42); font-size: 10px; }
-    .resurfaced-preview { margin-top: 3px; overflow: hidden; color: rgba(232,236,242,.62); font-size: 10.5px;
-                          text-overflow: ellipsis; white-space: nowrap; }
+    .resurfaced-name { overflow: hidden; font-size: 11px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+    .resurfaced-meta { color: var(--muted); font-size: 9.5px; }
+    .resurfaced-preview { margin-top: 3px; overflow: hidden; color: #69635c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .recall { display: block; width: calc(100% - 36px); margin: 0 18px 18px; padding: 10px 12px; border: 1px solid var(--ink); border-radius: 9px; color: #fff; background: var(--ink); text-align: center; text-decoration: none; cursor: pointer; font-weight: 620; transition: background 120ms ease, transform 120ms ease; }
+    .recall:hover { background: #373633; transform: translateY(-1px); }
   </style>
 </head>
 <body>
   <div class="head">
     <img src="icons/icon48.png" alt="" />
     <div>
-      <div class="wordmark">FOOTNOTES</div>
-      <div class="sub">knowledge capture</div>
+      <div class="wordmark">FootNotes</div>
+      <div class="sub">Your context, kept.</div>
     </div>
   </div>
 
@@ -116,7 +125,7 @@
     <div class="row"><span>Tweets</span><b id="cTweets">0</b></div>
     <div class="row"><span>Articles</span><b id="cArticles">0</b></div>
     <div class="row"><span>Videos</span><b id="cYoutube">0</b></div>
-    <div class="row" style="margin-top:6px;padding-top:7px;border-top:1px solid rgba(255,255,255,.06)">
+    <div class="row" style="margin-top:6px;padding-top:7px;border-top:1px solid var(--line)">
       <span>Total saved</span><b id="cTotal">0</b>
     </div>
     <div class="row"><span>Enrichment</span><b id="enrich" class="muted">—</b></div>
