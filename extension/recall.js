@@ -1,5 +1,5 @@
 // Focused Recall UI. All ranking stays in the local FastAPI server.
-const FOOTNOTE_SERVER = "http://localhost:8000";
+const FOOTNOTES_SERVER = "http://localhost:8000";
 const $ = (id) => document.getElementById(id);
 const queryInput = $("query");
 const resultsElement = $("results");
@@ -27,9 +27,9 @@ function setState(kind, message) {
   stateElement.replaceChildren();
   if (kind === "offline") {
     const strong = document.createElement("strong");
-    strong.textContent = "Footnote’s local service isn’t running.";
+    strong.textContent = "FootNotes’s local service isn’t running.";
     const detail = document.createElement("span");
-    detail.append("Start it from the Footnote folder: ");
+    detail.append("Start it from the FootNotes folder: ");
     const code = document.createElement("code");
     code.textContent = "uvicorn server:app --port 8000";
     detail.append(code);
@@ -43,14 +43,14 @@ function setState(kind, message) {
 
 function metaText(entry) {
   return [
-    FootnoteRecall.sourceLabel(entry),
+    FootNotesRecall.sourceLabel(entry),
     entry.author_handle || entry.author || "",
-    FootnoteRecall.savedDate(entry.captured_at),
+    FootNotesRecall.savedDate(entry.captured_at),
   ].filter(Boolean).join(" · ");
 }
 
 function openResult(entry) {
-  const url = FootnoteRecall.resultUrl(entry);
+  const url = FootNotesRecall.resultUrl(entry);
   if (url) chrome.tabs.create({ url });
 }
 
@@ -80,7 +80,7 @@ function renderRelated(entries) {
     meta.className = "related-item-meta";
     meta.textContent = metaText(entry);
     item.append(title, meta);
-    const previewText = FootnoteRecall.relatedPreview(entry);
+    const previewText = FootNotesRecall.relatedPreview(entry);
     if (previewText) {
       const preview = document.createElement("p");
       preview.className = `related-item-preview${entry.user_note ? " note" : ""}`;
@@ -113,7 +113,7 @@ function scheduleRelated(entry) {
     relatedController = new AbortController();
     try {
       const response = await fetch(
-        `${FOOTNOTE_SERVER}/entries/${encodeURIComponent(entry.id)}/related?limit=3`,
+        `${FOOTNOTES_SERVER}/entries/${encodeURIComponent(entry.id)}/related?limit=3`,
         { signal: relatedController.signal }
       );
       if (!response.ok) throw new Error(String(response.status));
@@ -177,7 +177,7 @@ function renderResults(nextResults, { initial = false } = {}) {
       excerpt.textContent = entry.excerpt;
       button.append(excerpt);
     }
-    const match = FootnoteRecall.matchLabel(entry);
+    const match = FootNotesRecall.matchLabel(entry);
     if (match) {
       const reason = document.createElement("p");
       reason.className = "result-match";
@@ -205,17 +205,17 @@ function selectResult(index, scroll = true) {
 }
 
 async function search(query, signal) {
-  const url = new URL(`${FOOTNOTE_SERVER}/search`);
+  const url = new URL(`${FOOTNOTES_SERVER}/search`);
   url.searchParams.set("q", query);
   url.searchParams.set("limit", "8");
   const response = await fetch(url, { signal });
-  if (!response.ok) throw new Error(`Footnote returned ${response.status}`);
+  if (!response.ok) throw new Error(`FootNotes returned ${response.status}`);
   const payload = await response.json();
   setConnection(true);
   return payload.entries || [];
 }
 
-const runner = FootnoteRecall.createSearchRunner({
+const runner = FootNotesRecall.createSearchRunner({
   search,
   onSearching() {
     searchingElement.textContent = "Searching…";
@@ -238,7 +238,7 @@ queryInput.addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     const direction = event.key === "ArrowDown" ? 1 : -1;
-    selectResult(FootnoteRecall.moveSelection(selectedIndex, direction, results.length));
+    selectResult(FootNotesRecall.moveSelection(selectedIndex, direction, results.length));
   } else if (event.key === "Enter" && selectedIndex >= 0) {
     event.preventDefault();
     openResult(results[selectedIndex]);
@@ -253,7 +253,7 @@ queryInput.addEventListener("keydown", (event) => {
 
 async function checkHealth() {
   try {
-    const response = await fetch(`${FOOTNOTE_SERVER}/health`, {
+    const response = await fetch(`${FOOTNOTES_SERVER}/health`, {
       signal: AbortSignal.timeout(2500),
     });
     if (!response.ok) throw new Error(String(response.status));

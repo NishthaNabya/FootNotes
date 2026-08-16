@@ -10,8 +10,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-import footnote_app
-import footnote_config
+import footnotes_app
+import footnotes_config
 import server
 from scripts import package_extension
 
@@ -25,8 +25,8 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.root = Path(self.tempdir.name)
         self.env = patch.dict(os.environ, {
-            "FOOTNOTE_CONFIG_DIR": str(self.root / "config"),
-            "FOOTNOTE_LOG_DIR": str(self.root / "logs"),
+            "FOOTNOTES_CONFIG_DIR": str(self.root / "config"),
+            "FOOTNOTES_LOG_DIR": str(self.root / "logs"),
         })
         self.env.start()
         self.originals = {
@@ -48,7 +48,7 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         result = await server.save_setup(
             server.SetupUpdate(vault_path=str(vault), provider="none"), FakeRequest()
         )
-        config = footnote_config.load_config()
+        config = footnotes_config.load_config()
         self.assertTrue(config.setup_complete)
         self.assertEqual(config.resolved_vault_path, vault.resolve())
         self.assertEqual(config.provider, "none")
@@ -68,7 +68,7 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(memory.read_text(encoding="utf-8"), original)
 
     def test_removed_provider_config_migrates_to_no_ai(self):
-        path = footnote_config.config_path()
+        path = footnotes_config.config_path()
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps({
             "version": 2,
@@ -76,11 +76,11 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
             "vault_path": str(self.root / "vault"),
             "provider": "gemini",
         }), encoding="utf-8")
-        loaded = footnote_config.load_config()
+        loaded = footnotes_config.load_config()
         self.assertEqual(loaded.provider, "none")
         self.assertEqual(loaded.resolved_vault_path, self.root / "vault")
         self.assertEqual(json.loads(path.read_text())["provider"], "none")
-        with patch.dict(os.environ, {"FOOTNOTE_INTELLIGENCE_PROVIDER": ""}):
+        with patch.dict(os.environ, {"FOOTNOTES_INTELLIGENCE_PROVIDER": ""}):
             self.assertEqual(server.selected_provider_name(loaded), "none")
 
     def test_previous_product_config_is_migrated_without_touching_its_vault(self):
@@ -100,9 +100,9 @@ class ReleaseConfigurationTests(unittest.IsolatedAsyncioTestCase):
         }), encoding="utf-8")
 
         with patch.dict(os.environ, {}, clear=True), \
-             patch.object(footnote_config, "app_support_dir", return_value=current_settings), \
-             patch.object(footnote_config, "_legacy_app_support_dir", return_value=legacy_settings):
-            loaded = footnote_config.load_config()
+             patch.object(footnotes_config, "app_support_dir", return_value=current_settings), \
+             patch.object(footnotes_config, "_legacy_app_support_dirs", return_value=[legacy_settings]):
+            loaded = footnotes_config.load_config()
 
         self.assertEqual(loaded.resolved_vault_path, vault)
         self.assertTrue((current_settings / "config.json").exists())
@@ -176,20 +176,20 @@ class LauncherAndPackagingTests(unittest.TestCase):
         self.assertIn('"qwen3:1.7b":"about 1.4 GB"', script)
 
     def test_duplicate_launch_reuses_existing_service(self):
-        with patch.object(footnote_app, "health", return_value={"service": "footnote"}), \
-             patch.object(footnote_app, "open_status") as opened, \
-             patch("footnote_app.subprocess.Popen") as spawned:
-            self.assertEqual(footnote_app.start(), 0)
+        with patch.object(footnotes_app, "health", return_value={"service": "footnotes"}), \
+             patch.object(footnotes_app, "open_status") as opened, \
+             patch("footnotes_app.subprocess.Popen") as spawned:
+            self.assertEqual(footnotes_app.start(), 0)
         opened.assert_called_once()
         spawned.assert_not_called()
 
     def test_port_conflict_has_clear_error_and_does_not_spawn(self):
-        with patch.object(footnote_app, "health", return_value=None), \
-             patch.object(footnote_app, "port_is_in_use", return_value=True), \
-             patch.object(footnote_app, "wait_for_footnote", return_value=None), \
-             patch.object(footnote_app, "show_error") as error, \
-             patch("footnote_app.subprocess.Popen") as spawned:
-            self.assertEqual(footnote_app.start(open_browser=False), 2)
+        with patch.object(footnotes_app, "health", return_value=None), \
+             patch.object(footnotes_app, "port_is_in_use", return_value=True), \
+             patch.object(footnotes_app, "wait_for_footnotes", return_value=None), \
+             patch.object(footnotes_app, "show_error") as error, \
+             patch("footnotes_app.subprocess.Popen") as spawned:
+            self.assertEqual(footnotes_app.start(open_browser=False), 2)
         self.assertIn("Port 8000", error.call_args.args[0])
         spawned.assert_not_called()
 

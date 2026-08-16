@@ -1,7 +1,7 @@
-# Extension Docs — Footnote V2 Capture Layer (Fetch Interception)
+# Extension Docs — FootNotes V2 Capture Layer (Fetch Interception)
 
 All Chrome-loadable files live under `extension/`. In Developer mode, use
-**Load unpacked** and select `Footnote/extension`; the repository root also holds
+**Load unpacked** and select `FootNotes/extension`; the repository root also holds
 the Python server, virtual environment, tests, scripts, and user vault and is
 not an extension package.
 
@@ -14,7 +14,7 @@ injected and no browsing history is stored.
 
 ## 1. Architecture Overview
 
-The Footnote Chrome Extension is the **capture layer** of the system. It intercepts network traffic at the JavaScript level by monkey-patching `window.fetch` and `XMLHttpRequest` in the page's main world, catches the GraphQL responses from X.com's API, normalizes the data, and ships it to your local Python server.
+The FootNotes Chrome Extension is the **capture layer** of the system. It intercepts network traffic at the JavaScript level by monkey-patching `window.fetch` and `XMLHttpRequest` in the page's main world, catches the GraphQL responses from X.com's API, normalizes the data, and ships it to your local Python server.
 
 No DOM scraping. No `chrome.webRequest`. No fragile selectors.
 
@@ -70,7 +70,7 @@ sequenceDiagram
     Note over interceptor.js: Monkey-patched window.fetch<br/>intercepts the call
 
     X.com API-->>interceptor.js: JSON response with tweet data
-    Note over interceptor.js: Clone response<br/>Parse JSON<br/>Check for CreateBookmark<br/>Extract tweet object<br/>Normalize to FOOTNOTE schema
+    Note over interceptor.js: Clone response<br/>Parse JSON<br/>Check for CreateBookmark<br/>Extract tweet object<br/>Normalize to FOOTNOTES schema
     interceptor.js->>content.js: window.postMessage({payload})
 
     Note over content.js: Receive postMessage<br/>Forward via chrome.runtime.sendMessage
@@ -91,7 +91,7 @@ sequenceDiagram
         Offline Queue->>FastAPI Server: Replay queued payloads
     end
 
-    User->>X.com Page: Right-click any page → "Save to Footnote"
+    User->>X.com Page: Right-click any page → "Save to FootNotes"
     X.com Page->>background.js: contextMenus.onClicked fires
     Note over background.js: Build article payload<br/>from tab metadata
     background.js->>FastAPI Server: POST /ingest
@@ -190,7 +190,7 @@ The XHR patch is trickier because XHR is a class, not a single function. We patc
 
 ```javascript
 XMLHttpRequest.prototype.open = function (method, url) {
-  this._footnoteUrl = url; // Store the URL for later
+  this._footnotesUrl = url; // Store the URL for later
   return originalXHROpen.apply(this, arguments);
 };
 
@@ -226,13 +226,13 @@ This is critical. If we don't clone, we steal the response from X.com's own code
 ```javascript
 // In interceptor.js (main world)
 window.postMessage(
-  { source: "footnote-interceptor", type: "bookmark-captured", payload },
+  { source: "footnotes-interceptor", type: "bookmark-captured", payload },
   "*"
 );
 
 // In content.js (isolated world)
 window.addEventListener("message", (event) => {
-  if (event.data.source !== "footnote-interceptor") return;
+  if (event.data.source !== "footnotes-interceptor") return;
   if (event.data.type !== "bookmark-captured") return;
   // Forward to background.js
   chrome.runtime.sendMessage({ type: "BOOKMARK_CAPTURED", payload: event.data.payload });
@@ -241,7 +241,7 @@ window.addEventListener("message", (event) => {
 
 The `"*"` as the second argument means "send to any origin." In a production security-hardened extension, you'd use the specific origin (`https://x.com`). For a personal tool, `"*"` is fine.
 
-We include `source: "footnote-interceptor"` as a **namespace** to avoid collisions. Other extensions or page scripts might also use `postMessage`. By checking the `source` field, we make sure we only process our own messages.
+We include `source: "footnotes-interceptor"` as a **namespace** to avoid collisions. Other extensions or page scripts might also use `postMessage`. By checking the `source` field, we make sure we only process our own messages.
 
 ### What is `chrome.runtime.onMessage`?
 
@@ -271,7 +271,7 @@ Here's the full journey of a single bookmark, step by step:
 6. **We parse the cloned response** as JSON
 7. **We check if it's a CreateBookmark response** by looking for `data.createBookmark`
 8. **We extract the tweet object** by walking the nested JSON structure
-9. **We normalize it** to the FOOTNOTE schema (strip noise, keep essentials)
+9. **We normalize it** to the FOOTNOTES schema (strip noise, keep essentials)
 10. **We broadcast via `window.postMessage`** to the content script
 11. **Content script receives** the message and forwards it via `chrome.runtime.sendMessage`
 12. **Background service worker receives** the message
@@ -306,7 +306,7 @@ This means the content script runs **before the page's own JavaScript executes**
 
 Every step of this pipeline is wrapped in `try/catch`. If the response isn't JSON, if the GraphQL structure is unexpected, if the server is down — we log it and move on. The user never sees an error.
 
-This is intentional. Footnote is an ambient tool. If it breaks silently, the worst case is that one bookmark doesn't get saved to your vault. The user can always manually save it later. But if it shows error popups, the user loses trust and disables the extension.
+This is intentional. FootNotes is an ambient tool. If it breaks silently, the worst case is that one bookmark doesn't get saved to your vault. The user can always manually save it later. But if it shows error popups, the user loses trust and disables the extension.
 
 ### The Big Picture
 

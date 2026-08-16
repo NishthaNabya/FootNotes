@@ -1,7 +1,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === "object" && module.exports) module.exports = api;
-  else root.FootnotePageContext = api;
+  else root.FootNotesPageContext = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   const MAX_CONTEXT_TEXT = 6000;
   const PRIVATE_HOSTS = [

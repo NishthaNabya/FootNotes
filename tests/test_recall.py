@@ -27,7 +27,7 @@ class FakeEmbeddingProvider:
     @staticmethod
     def _vector(text):
         text = text.lower()
-        if any(word in text for word in ("footnote", "landing", "homepage", "onboarding")):
+        if any(word in text for word in ("footnotes", "landing", "homepage", "onboarding")):
             return [0.5, 0.5, 0.0, 0.0]
         if any(word in text for word in ("background", "ambient", "unnoticed", "invisible")):
             return [1.0, 0.0, 0.0, 0.0]
@@ -371,7 +371,7 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
         accepted = await server.ingest(payload)
         self.assertEqual(accepted["status"], "accepted")
         entry_id = accepted["entry_id"]
-        pending = await self.update_note(entry_id, "use this for Footnote onboarding")
+        pending = await self.update_note(entry_id, "use this for FootNotes onboarding")
         self.assertEqual(pending["status"], "pending")
 
         queued_payload, queued_id = await server.ingest_queue.get()
@@ -381,7 +381,7 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
             server.ingest_queue.task_done()
         entry = server.load_vault_entries()[0]
         self.assertEqual(entry["id"], entry_id)
-        self.assertEqual(entry["user_note"], "use this for Footnote onboarding")
+        self.assertEqual(entry["user_note"], "use this for FootNotes onboarding")
         self.assertEqual(entry["content"], "The original captured content.")
 
     async def test_note_persists_and_participates_in_exact_recall(self):
@@ -394,18 +394,18 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
         original_body = original_text[original_text.find("\n---\n", 4) + 5:]
         original_source_line = "source_url: https://example.com/inspiration"
         self.assertIn(original_source_line, original_text)
-        result = await self.update_note(entry["id"], "use this for Footnote landing page")
+        result = await self.update_note(entry["id"], "use this for FootNotes landing page")
         self.assertEqual(result["status"], "saved")
         updated_text = path.read_text()
         updated_body = updated_text[updated_text.find("\n---\n", 4) + 5:]
         self.assertEqual(updated_body, original_body)
         self.assertIn(original_source_line, updated_text)
         reparsed = server.parse_entry_file(path)
-        self.assertEqual(reparsed["user_note"], "use this for Footnote landing page")
+        self.assertEqual(reparsed["user_note"], "use this for FootNotes landing page")
         self.assertEqual(reparsed["content"], "Generic visual design material.")
 
         ranked = await server.hybrid_recall(
-            server.load_vault_entries(), "Footnote landing page"
+            server.load_vault_entries(), "FootNotes landing page"
         )
         self.assertEqual(ranked[0]["id"], entry["id"])
         self.assertTrue(any("user note" in reason for reason in ranked[0]["relevance"]["reasons"]))
@@ -419,9 +419,9 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
             "note-semantic-2", "A sourdough bread recipe.",
             "https://example.com/bread-note", title="Bread",
         )
-        await self.update_note(intended["id"], "use this for Footnote landing page")
+        await self.update_note(intended["id"], "use this for FootNotes landing page")
         ranked = await server.hybrid_recall(
-            server.load_vault_entries(), "thing I wanted for the Footnote homepage"
+            server.load_vault_entries(), "thing I wanted for the FootNotes homepage"
         )
         self.assertEqual(ranked[0]["id"], intended["id"])
         scores = {item["id"]: item["relevance"]["score"] for item in ranked}
@@ -473,7 +473,7 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.set_vector(source, [1.0, 0.0, 0.0, 0.0])
         self.set_vector(neighbor, [0.8, 0.6, 0.0, 0.0])
-        # Cosine 0.70 is plausibly similar, but below Footnote's quality floor.
+        # Cosine 0.70 is plausibly similar, but below FootNotes's quality floor.
         self.set_vector(unrelated, [0.70, 0.71414284, 0.0, 0.0])
 
         related = server.related_memories(server.load_vault_entries(), source["id"])
@@ -486,7 +486,7 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
     async def test_related_excludes_obvious_duplicate(self):
         source = await self.save(
             "duplicate-source", "Same original body.",
-            "https://example.com/duplicate?utm_source=footnote",
+            "https://example.com/duplicate?utm_source=footnotes",
             title="Original", embed=False,
         )
         duplicate = await self.save(
@@ -507,8 +507,8 @@ class RecallFoundationTests(unittest.IsolatedAsyncioTestCase):
             "note-related-neighbor", "Another generic visual reference.",
             "https://example.com/note-related-neighbor", title="Reference B",
         )
-        await self.update_note(source["id"], "use this for Footnote onboarding")
-        await self.update_note(neighbor["id"], "idea for the Footnote homepage")
+        await self.update_note(source["id"], "use this for FootNotes onboarding")
+        await self.update_note(neighbor["id"], "idea for the FootNotes homepage")
         related = server.related_memories(server.load_vault_entries(), source["id"])
         self.assertEqual(related[0]["id"], neighbor["id"])
         self.assertEqual(related[0]["relationship"]["method"], "semantic")

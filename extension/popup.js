@@ -1,10 +1,10 @@
 // popup.js — Shows whether the local server is reachable and what's in the vault.
 //
-// This exists because every other signal Footnote produced was a console.log. If
+// This exists because every other signal FootNotes produced was a console.log. If
 // the Python server wasn't running, bookmarking a tweet did nothing visible
 // anywhere, and there was no way to tell a broken install from an idle one.
 
-const FOOTNOTE_SERVER = "http://localhost:8000";
+const FOOTNOTES_SERVER = "http://localhost:8000";
 
 const el = (id) => document.getElementById(id);
 
@@ -43,7 +43,7 @@ function renderResurfaced(entries) {
   if (!entries.length) return;
   const heading = document.createElement("div");
   heading.className = "resurfaced-title";
-  heading.textContent = `Footnote · ${entries.length}`;
+  heading.textContent = `FootNotes · ${entries.length}`;
   section.append(heading);
   entries.forEach((entry) => {
     const item = document.createElement("button");
@@ -137,7 +137,7 @@ el("noteForm").addEventListener("submit", async (event) => {
   el("noteMessage").textContent = "Saving…";
   try {
     const response = await fetch(
-      `${FOOTNOTE_SERVER}/entries/${encodeURIComponent(recentCapture.entry_id)}/note`,
+      `${FOOTNOTES_SERVER}/entries/${encodeURIComponent(recentCapture.entry_id)}/note`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -150,7 +150,7 @@ el("noteForm").addEventListener("submit", async (event) => {
     await chrome.storage.local.set({ recentCapture });
     el("noteMessage").textContent = note ? "Thought saved." : "Thought cleared.";
   } catch {
-    el("noteMessage").textContent = "Couldn’t save. Is Footnote running?";
+    el("noteMessage").textContent = "Couldn’t save. Is FootNotes running?";
   } finally {
     button.disabled = false;
   }
@@ -161,7 +161,7 @@ async function refresh() {
 
   let health;
   try {
-    const res = await fetch(`${FOOTNOTE_SERVER}/health`, {
+    const res = await fetch(`${FOOTNOTES_SERVER}/health`, {
       signal: AbortSignal.timeout(2500),
     });
     if (!res.ok) throw new Error(String(res.status));
@@ -169,8 +169,8 @@ async function refresh() {
   } catch {
     setStatus(
       "bad",
-      "Footnote isn’t running",
-      `Open the Footnote app, then try again.` +
+      "FootNotes isn’t running",
+      `Open the FootNotes app, then try again.` +
         (queued
           ? `<br><br>${queued} capture${queued === 1 ? "" : "s"} waiting — they'll send automatically once it's up.`
           : "")
@@ -216,10 +216,10 @@ async function refresh() {
     setStatus(
       "warn",
       "Connected — local features ready",
-      `Captures and exact Recall work. Open the Footnote app to check ${providerName === "ollama" ? "Local AI" : "your intelligence mode"}.`
+      `Captures and exact Recall work. Open the FootNotes app to check ${providerName === "ollama" ? "Local AI" : "your intelligence mode"}.`
     );
   } else {
-    setStatus("ok", "Connected", "Bookmark on X, or right-click → Save to Footnote.");
+    setStatus("ok", "Connected", "Bookmark on X, or right-click → Save to FootNotes.");
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Footnote",
+  "name": "FootNotes",
   "version": "0.1.0",
   "description": "Capture what matters while browsing, then find it again from whatever you remember.",
   "permissions": [
@@ -57,7 +57,7 @@
     }
   ],
   "action": {
-    "default_title": "Footnote",
+    "default_title": "FootNotes",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -74,7 +74,7 @@
         "linux": "Alt+O",
         "mac": "Command+Shift+O"
       },
-      "description": "Open Footnote Recall"
+      "description": "Open FootNotes Recall"
     }
   }
 }

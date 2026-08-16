@@ -23,7 +23,7 @@ class OllamaTransport:
         text = text.lower()
         if any(word in text for word in ("invisible", "ambient", "background", "quiet")):
             return [1.0, 0.0, 0.0, 0.0]
-        if any(word in text for word in ("footnote", "homepage", "landing", "onboarding")):
+        if any(word in text for word in ("footnotes", "homepage", "landing", "onboarding")):
             return [0.7, 0.7, 0.0, 0.0]
         if any(word in text for word in ("bread", "recipe", "sourdough")):
             return [0.0, 1.0, 0.0, 0.0]
@@ -149,7 +149,7 @@ class OllamaMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         noted = await self.save(
             "noted", "Design reference", "A visual design case study.",
-            "https://example.com/design", note="use this for Footnote landing page",
+            "https://example.com/design", note="use this for FootNotes landing page",
             tags=["reference"],
         )
         bread = await self.save(
@@ -158,7 +158,7 @@ class OllamaMemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         ranked = await server.hybrid_recall(server.load_vault_entries(), "invisible technology")
         self.assertEqual(ranked[0]["id"], calm["id"])
-        note_ranked = await server.hybrid_recall(server.load_vault_entries(), "Footnote homepage idea")
+        note_ranked = await server.hybrid_recall(server.load_vault_entries(), "FootNotes homepage idea")
         self.assertEqual(note_ranked[0]["id"], noted["id"])
         related = server.related_memories(server.load_vault_entries(), calm["id"])
         self.assertNotIn(bread["id"], [entry["id"] for entry in related])

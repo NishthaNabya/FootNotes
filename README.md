@@ -1,30 +1,30 @@
 <div align="center">
-  <img src="extension/icons/footnote-mark.svg" width="72" alt="Footnote" />
-  <h1>Footnote</h1>
+  <img src="extension/icons/footnotes-mark.svg" width="72" alt="FootNotes" />
+  <h1>FootNotes</h1>
   <p><strong>Make what you save useful later.</strong></p>
 </div>
 
 The things you find online usually lose their context long before you need them
 again.
 
-Footnote is an open-source experiment around keeping that context alive.
+FootNotes is an open-source experiment around keeping that context alive.
 
 Save something naturally. Add why it mattered if you want. Find it later from
 a half-memory—and, eventually, know when something you relied on has changed.
 
-> **Information without context ages badly. Footnote keeps the context.**
+> **Information without context ages badly. FootNotes keeps the context.**
 
-Today, Footnote captures what mattered without asking you to reorganize your
+Today, FootNotes captures what mattered without asking you to reorganize your
 browsing, keeps it as Markdown on your machine, remembers why you cared when
 you choose to say, and helps you find it again from an incomplete recollection.
 
 It is early v0.1 software. Trying it, breaking it, challenging the idea, and
 contributing retrieval examples are all welcome.
 
-## What Footnote feels like
+## What FootNotes feels like
 
 Bookmark something on X normally, or right-click an article and choose
-**Save to Footnote**. That is the complete capture flow.
+**Save to FootNotes**. That is the complete capture flow.
 
 After the memory is safely saved, you can optionally add one thought:
 
@@ -39,10 +39,10 @@ Weeks later, you can search:
 
 > `that opportunity where I could help people in my field`
 
-Footnote combines ordinary text matching with local semantic retrieval to find
+FootNotes combines ordinary text matching with local semantic retrieval to find
 the memory even when the original title and wording are gone from your head.
 
-If you explicitly enable resurfacing, Footnote can also stay alert for a small
+If you explicitly enable resurfacing, FootNotes can also stay alert for a small
 number of unusually relevant memories while you read public webpages. When
 nothing is useful, it stays quiet.
 
@@ -64,7 +64,7 @@ remember fragments such as:
 
 Sometimes they do not remember to search at all.
 
-Footnote is built around **Capture → Connect → Recall**. The interesting problem
+FootNotes is built around **Capture → Connect → Recall**. The interesting problem
 is not how to store more knowledge. It is how information you deliberately
 cared about can remain relevant, contextual, and trustworthy over time—without
 giving up ownership of the source or your thinking around it.
@@ -76,12 +76,12 @@ giving up ownership of the source or your thinking around it.
 | Source | How | Saved evidence |
 |---|---|---|
 | **X / Twitter** | Bookmark a post normally | Full post text, author, original URL, and timestamp |
-| **YouTube** | Right-click → Save to Footnote | Transcript when available, title, channel, URL, and upload date |
-| **Articles and links** | Right-click → Save to Footnote | Readable extracted text and source provenance |
-| **Selected text** | Highlight, then right-click → Save to Footnote | The selected passage and its source |
+| **YouTube** | Right-click → Save to FootNotes | Transcript when available, title, channel, URL, and upload date |
+| **Articles and links** | Right-click → Save to FootNotes | Readable extracted text and source provenance |
+| **Selected text** | Highlight, then right-click → Save to FootNotes | The selected passage and its source |
 
 If the local service is stopped, the extension queues captures and sends them
-when Footnote returns. Duplicate URLs are handled safely.
+when FootNotes returns. Duplicate URLs are handled safely.
 
 ### Personal context
 
@@ -101,31 +101,31 @@ Markdown and participates strongly in both lexical and semantic Recall.
 Open Recall with **Command+Shift+O** on macOS or **Alt+O** on Windows/Linux,
 or use the toolbar button. Search using whatever fragments you remember.
 
-Footnote combines exact text signals with local embeddings. Memories without an
+FootNotes combines exact text signals with local embeddings. Memories without an
 embedding still participate fully in lexical search, so Recall continues to
 work in No AI mode. The shortcut can be changed at
 `chrome://extensions/shortcuts`.
 
 ### Related
 
-When you inspect a memory, Footnote can show a few strong semantic neighbors.
+When you inspect a memory, FootNotes can show a few strong semantic neighbors.
 Shared tags provide a fallback when vectors are missing. Weak matches,
 duplicates, and the memory itself are excluded rather than used to fill space.
 
 ### Resurface
 
-Contextual resurfacing is optional and off by default. If enabled, Footnote reads
+Contextual resurfacing is optional and off by default. If enabled, FootNotes reads
 a bounded amount of ordinary public-page text and compares that temporary
 context with local memory vectors.
 
-The current page is not added to your memory. Footnote does not read form values,
+The current page is not added to your memory. FootNotes does not read form values,
 operate on private/local/authentication pages, retain browsing history, or
 inject an interface into the webpage. It shows at most a few high-confidence
 results in the extension popup.
 
 ## Your memory is yours
 
-Footnote is local-first on purpose.
+FootNotes is local-first on purpose.
 
 Each memory is a normal Markdown file in a folder you choose. The original
 source URL, capture time, captured text snapshot, snapshot hash, and optional
@@ -140,7 +140,7 @@ requirement or the product's storage layer.
 ```text
 Chrome extension
       ↓
-Footnote local service
+FootNotes local service
       ↓
 Markdown               ← canonical memory
       ↓
@@ -148,11 +148,11 @@ SQLite + vectors        ← derived and rebuildable
 ```
 
 Public v0.1 uses [Ollama](https://ollama.com/) for optional local enrichment
-and semantic retrieval. Footnote does not install Ollama or download model files
+and semantic retrieval. FootNotes does not install Ollama or download model files
 silently. Without AI, Capture and lexical Recall continue to work.
 
-- No Footnote account
-- No Footnote cloud
+- No FootNotes account
+- No FootNotes cloud
 - No hosted vector database
 - No required cloud AI
 - No telemetry
@@ -162,7 +162,7 @@ exists.
 
 ## Principles
 
-1. **Saving should feel natural.** Footnote should fit behavior people already
+1. **Saving should feel natural.** FootNotes should fit behavior people already
    have instead of creating another inbox to maintain.
 2. **The original should survive.** A summary is not the source. Captured
    evidence and provenance remain intact while derived state stays rebuildable.
@@ -171,11 +171,11 @@ exists.
 4. **Local-first means ownership.** The durable copy belongs to the user, not
    merely to an application's offline cache.
 5. **Quiet is a feature.** Three strong memories are better than twenty weak
-   suggestions. If Footnote has nothing useful to say, it should say nothing.
-6. **Memory should not become homework.** Footnote resists mandatory folders,
+   suggestions. If FootNotes has nothing useful to say, it should say nothing.
+6. **Memory should not become homework.** FootNotes resists mandatory folders,
    graphs, templates, tags, and maintenance rituals.
 
-## What Footnote is not trying to become
+## What FootNotes is not trying to become
 
 - Another Notion or Obsidian
 - A generic bookmark manager
@@ -196,13 +196,13 @@ bring information back when it becomes relevant, whether old information can
 signal that it may no longer be safe to rely on, and whether precedent is more
 useful than surface-level similarity.
 
-None of those are promised v0.1 features. Footnote does not currently monitor
+None of those are promised v0.1 features. FootNotes does not currently monitor
 webpages, track assumptions, detect changes, or generate alerts. They are
 research questions to validate before building anything.
 
 ## Current status
 
-Footnote is early v0.1 software. The packaged runtime currently targets:
+FootNotes is early v0.1 software. The packaged runtime currently targets:
 
 - Apple-silicon macOS 12 or newer
 - Chrome
@@ -219,13 +219,13 @@ artifacts must still be signed and notarized before normal public distribution.
 
 For the prerelease flow:
 
-1. Build or obtain `Footnote-macOS-arm64-0.1.0.zip`, unzip it, and move
-   `Footnote.app` to Applications.
-2. Open Footnote and choose where the Markdown memories should live. The default
-   is `~/Documents/Footnote`.
+1. Build or obtain `FootNotes-macOS-arm64-0.1.0.zip`, unzip it, and move
+   `FootNotes.app` to Applications.
+2. Open FootNotes and choose where the Markdown memories should live. The default
+   is `~/Documents/FootNotes`.
 3. Choose Local AI or No AI. Local AI uses an already-installed Ollama runtime;
-   Footnote reports missing requirements and download sizes before you act.
-4. Unzip `footnote-extension-0.1.0.zip`, open `chrome://extensions`, enable
+   FootNotes reports missing requirements and download sizes before you act.
+4. Unzip `footnotes-extension-0.1.0.zip`, open `chrome://extensions`, enable
    Developer mode, choose **Load unpacked**, and select the extracted extension
    folder.
 5. Save something. The toolbar popup should show **Saved ✓** and the optional
@@ -237,8 +237,8 @@ packaging, and source setup.
 
 ### Optional: use the folder as an Obsidian vault
 
-In Obsidian, choose **Open folder as vault** and select Footnote's memory folder.
-Footnote's Markdown remains usable without Obsidian.
+In Obsidian, choose **Open folder as vault** and select FootNotes's memory folder.
+FootNotes's Markdown remains usable without Obsidian.
 
 ## How it works
 
@@ -253,7 +253,7 @@ Footnote's Markdown remains usable without Obsidian.
                      └─────────┬──────────┘
                                │ localhost
                      ┌─────────▼──────────┐
-                     │ Footnote local server │
+                     │ FootNotes local server │
                      │ extract / enrich   │
                      │ embed / retrieve   │
                      └─────────┬──────────┘
@@ -277,7 +277,7 @@ cannot roll back a durable memory.
 
 Implementation details:
 
-- [FOOTNOTE-PROTOCOL.md](FOOTNOTE-PROTOCOL.md) — canonical data and persistence rules
+- [FOOTNOTES-PROTOCOL.md](FOOTNOTES-PROTOCOL.md) — canonical data and persistence rules
 - [extension-docs.md](extension-docs.md) — Chrome capture and retry layer
 - [server-docs.md](server-docs.md) — local processing service
 - [RELEASE.md](RELEASE.md) — install, packaging, upgrade, and uninstall
@@ -295,7 +295,7 @@ not the repository root.
 ```bash
 ./.venv/bin/python -m unittest discover -s tests -v
 ./.venv/bin/python -m compileall -q server.py providers.py backfill.py \
-  backfill_embeddings.py migrate_to_obsidian.py footnote_app.py footnote_config.py
+  backfill_embeddings.py migrate_to_obsidian.py footnotes_app.py footnotes_config.py
 node --test tests/test_recall_ui.js tests/test_page_context.js
 node --check extension/background.js
 node --check extension/content.js
@@ -339,7 +339,7 @@ tool solves the problem better, sharing that comparison is useful research.
 
 ## Similar projects
 
-Footnote exists in an active space and does not claim to have invented webpage
+FootNotes exists in an active space and does not claim to have invented webpage
 capture, semantic search, local AI, or resurfacing. Related projects include:
 
 - [Karakeep](https://github.com/karakeep-app/karakeep)
@@ -347,7 +347,7 @@ capture, semantic search, local AI, or resurfacing. Related projects include:
 - [Obsidian Web Clipper](https://github.com/obsidianmd/obsidian-clipper)
 - [Khoj](https://github.com/khoj-ai/khoj)
 
-Footnote's narrower question is whether software can keep the things a person
+FootNotes's narrower question is whether software can keep the things a person
 deliberately cared about connected to why they mattered—and make them useful
 again at the right moment while the underlying information remains theirs.
 

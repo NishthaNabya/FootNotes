@@ -1,6 +1,6 @@
-# Footnote repository map
+# FootNotes repository map
 
-Footnote is an open, local-first memory layer for the internet. Its loop is **Capture → Connect → Recall**: capture through browsing habits, structure and connect automatically, then recover memories from incomplete recollection.
+FootNotes is an open, local-first memory layer for the internet. Its loop is **Capture → Connect → Recall**: capture through browsing habits, structure and connect automatically, then recover memories from incomplete recollection.
 
 ## Architecture
 
@@ -9,7 +9,7 @@ Footnote is an open, local-first memory layer for the internet. Its loop is **Ca
 - `extension/page-context-state.js` → `extension/page-context.js` → `POST /resurface`: opt-in, bounded, ephemeral public-page matching.
 - `server.py`: FastAPI ingestion, extraction, enrichment, Markdown persistence, SQLite metadata, Related links, and retrieval.
 - `providers.py`: provider-neutral health/enrichment/embedding boundary. Public v0.1 supports Ollama and No AI.
-- `footnote_config.py`, `footnote_app.py`, `onboarding/`: packaged local settings/Keychain, lifecycle, and first-run/status UI.
+- `footnotes_config.py`, `footnotes_app.py`, `onboarding/`: packaged local settings/Keychain, lifecycle, and first-run/status UI.
 - `scripts/`: allowlisted extension packaging and the macOS app release build.
 - `backfill.py`, `backfill_embeddings.py`, `migrate_to_obsidian.py`: safe maintenance and migrations.
 - `vault/` (gitignored): user-owned Markdown source of truth plus local SQLite indexes. Never treat it as disposable build output.
@@ -20,7 +20,7 @@ Footnote is an open, local-first memory layer for the internet. Its loop is **Ca
 ./.venv/bin/uvicorn server:app --port 8000
 ./.venv/bin/python -m unittest discover -s tests -v
 npm run test:recall-ui
-./.venv/bin/python -m compileall -q server.py providers.py footnote_config.py footnote_app.py backfill.py backfill_embeddings.py migrate_to_obsidian.py
+./.venv/bin/python -m compileall -q server.py providers.py footnotes_config.py footnotes_app.py backfill.py backfill_embeddings.py migrate_to_obsidian.py
 node --check extension/background.js && node --check extension/content.js && node --check extension/interceptor.js && node --check extension/popup.js && node --check extension/recall.js && node --check extension/recall-state.js
 ./.venv/bin/python -m json.tool extension/manifest.json >/dev/null
 ./.venv/bin/python scripts/package_extension.py

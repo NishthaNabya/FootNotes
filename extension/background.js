@@ -1,11 +1,11 @@
-// background.js — Footnote V2 Service Worker
+// background.js — FootNotes V2 Service Worker
 // Receives normalized payloads from the content script bridge,
 // POSTs them to the local FastAPI server, and manages the offline queue.
 
-const FOOTNOTE_SERVER = "http://localhost:8000";
+const FOOTNOTES_SERVER = "http://localhost:8000";
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
-const RESURFACE_SCRIPT_ID = "footnote-contextual-resurfacing";
+const RESURFACE_SCRIPT_ID = "footnotes-contextual-resurfacing";
 const RESURFACE_ORIGINS = ["http://*/*", "https://*/*"];
 const resurfacedByTab = new Map();
 const checkedPageByTab = new Map();
@@ -15,7 +15,7 @@ const checkedPageByTab = new Map();
 // ──────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[Footnote] V2 installed — fetch interception active.");
+  console.log("[FootNotes] V2 installed — fetch interception active.");
   setupContextMenus();
   restoreOfflineQueue();
   syncResurfacingRegistration().catch(() => {});
@@ -47,15 +47,15 @@ chrome.runtime.onMessage.addListener((request) => {
 function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
-      id: "footnote-save-page",
-      title: "Save to Footnote",
+      id: "footnotes-save-page",
+      title: "Save to FootNotes",
       contexts: ["page", "selection", "link"],
     });
   });
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== "footnote-save-page") return;
+  if (info.menuItemId !== "footnotes-save-page") return;
 
   const url = info.linkUrl || tab.url;
   const platform = extractPlatform(url);
@@ -95,7 +95,7 @@ function detectType(url, platform) {
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === "BOOKMARK_CAPTURED" && request.payload) {
-    console.log("[Footnote] Bookmark captured:", request.payload.source_url);
+    console.log("[FootNotes] Bookmark captured:", request.payload.source_url);
     sendToServer(request.payload, sender.tab?.id).then(() => {
       sendResponse({ status: "queued" });
     });
@@ -143,7 +143,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.resurfacingEnabled.newValue === true) return;
   for (const tabId of resurfacedByTab.keys()) {
     chrome.action.setBadgeText({ tabId, text: "" });
-    chrome.action.setTitle({ tabId, title: "Footnote" });
+    chrome.action.setTitle({ tabId, title: "FootNotes" });
   }
   resurfacedByTab.clear();
   checkedPageByTab.clear();
@@ -204,11 +204,11 @@ function extractPlatform(url) {
 // payload in chrome.storage.local for retry.
 
 async function sendToServer(payload, tabId = null) {
-  console.log("[Footnote] Sending to server:", payload.type, payload.source_url);
+  console.log("[FootNotes] Sending to server:", payload.type, payload.source_url);
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(`${FOOTNOTE_SERVER}/ingest`, {
+      const response = await fetch(`${FOOTNOTES_SERVER}/ingest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -217,14 +217,14 @@ async function sendToServer(payload, tabId = null) {
 
       if (response.ok) {
         const result = await response.json();
-        console.log("[Footnote] Ingested successfully:", payload.source_url);
+        console.log("[FootNotes] Ingested successfully:", payload.source_url);
         await rememberSuccessfulCapture(payload, result);
         await flashBadge("ok", tabId);
         return result;
       }
     } catch (err) {
       console.warn(
-        `[Footnote] Attempt ${attempt}/${MAX_RETRIES} failed:`,
+        `[FootNotes] Attempt ${attempt}/${MAX_RETRIES} failed:`,
         err.message
       );
     }
@@ -235,7 +235,7 @@ async function sendToServer(payload, tabId = null) {
   }
 
   // All retries exhausted — queue for offline retry
-  console.warn("[Footnote] Server unreachable. Queuing payload locally.");
+  console.warn("[FootNotes] Server unreachable. Queuing payload locally.");
   await queuePayload(payload);
   await showQueuedBadge();
 }
@@ -301,7 +301,7 @@ async function applyResurfaceBadge(tabId) {
   await chrome.action.setBadgeText({ tabId, text: count ? String(count) : "" });
   await chrome.action.setTitle({
     tabId,
-    title: count ? `Footnote · ${count} related ${count === 1 ? "memory" : "memories"}` : "Footnote",
+    title: count ? `FootNotes · ${count} related ${count === 1 ? "memory" : "memories"}` : "FootNotes",
   });
 }
 
@@ -313,7 +313,7 @@ async function handlePageContext(tabId, context, fingerprint) {
   }
   checkedPageByTab.set(tabId, fingerprint || context.url);
   try {
-    const response = await fetch(`${FOOTNOTE_SERVER}/resurface?limit=3`, {
+    const response = await fetch(`${FOOTNOTES_SERVER}/resurface?limit=3`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(context),
@@ -349,19 +349,19 @@ async function queuePayload(payload) {
   const { queue = [] } = await chrome.storage.local.get("queue");
   queue.push({ payload, queued_at: new Date().toISOString() });
   await chrome.storage.local.set({ queue });
-  console.log(`[Footnote] Queued. Queue size: ${queue.length}`);
+  console.log(`[FootNotes] Queued. Queue size: ${queue.length}`);
 }
 
 async function restoreOfflineQueue() {
   const { queue = [] } = await chrome.storage.local.get("queue");
   if (queue.length === 0) return;
 
-  console.log(`[Footnote] Restoring ${queue.length} queued payloads.`);
+  console.log(`[FootNotes] Restoring ${queue.length} queued payloads.`);
   const stillQueued = [];
 
   for (const item of queue) {
     try {
-      const response = await fetch(`${FOOTNOTE_SERVER}/ingest`, {
+      const response = await fetch(`${FOOTNOTES_SERVER}/ingest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(item.payload),
@@ -370,7 +370,7 @@ async function restoreOfflineQueue() {
 
       if (response.ok) {
         const result = await response.json();
-        console.log("[Footnote] Flushed queued item:", item.payload.source_url);
+        console.log("[FootNotes] Flushed queued item:", item.payload.source_url);
         await rememberSuccessfulCapture(item.payload, result);
       } else {
         stillQueued.push(item);
@@ -381,7 +381,7 @@ async function restoreOfflineQueue() {
   }
 
   await chrome.storage.local.set({ queue: stillQueued });
-  console.log(`[Footnote] Queue remaining: ${stillQueued.length}`);
+  console.log(`[FootNotes] Queue remaining: ${stillQueued.length}`);
   await showQueuedBadge();
 }
 

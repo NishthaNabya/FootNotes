@@ -1,10 +1,10 @@
 // Opt-in contextual resurfacing for ordinary public webpages. The current
-// page remains ephemeral: only a bounded context is sent to Footnote's local
+// page remains ephemeral: only a bounded context is sent to FootNotes's local
 // server and nothing here writes browsing history.
 (function () {
-  if (globalThis.__footnotePageContextLoaded) return;
-  globalThis.__footnotePageContextLoaded = true;
-  if (!FootnotePageContext.isSupportedUrl(location.href)) return;
+  if (globalThis.__footnotesPageContextLoaded) return;
+  globalThis.__footnotesPageContextLoaded = true;
+  if (!FootNotesPageContext.isSupportedUrl(location.href)) return;
 
   let enabled = false;
   let lastUrl = location.href;
@@ -18,7 +18,7 @@
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const parts = [];
     let length = 0;
-    while (walker.nextNode() && length < FootnotePageContext.MAX_CONTEXT_TEXT + 1000) {
+    while (walker.nextNode() && length < FootNotesPageContext.MAX_CONTEXT_TEXT + 1000) {
       const node = walker.currentNode;
       if (node.parentElement?.closest(forbidden)) continue;
       const value = node.textContent?.replace(/\s+/g, " ").trim();
@@ -37,16 +37,16 @@
 
   async function analyze() {
     timer = null;
-    if (!enabled || !FootnotePageContext.isSupportedUrl(location.href)) return;
+    if (!enabled || !FootNotesPageContext.isSupportedUrl(location.href)) return;
     if (document.querySelector("input[type='password']")) return;
-    const context = FootnotePageContext.buildContext({
+    const context = FootNotesPageContext.buildContext({
       url: location.href,
       title: document.title,
       description: description(),
       text: readableText(),
     });
-    if (!FootnotePageContext.isMeaningfulContext(context)) return;
-    const nextFingerprint = FootnotePageContext.fingerprint(context);
+    if (!FootNotesPageContext.isMeaningfulContext(context)) return;
+    const nextFingerprint = FootNotesPageContext.fingerprint(context);
     if (nextFingerprint === lastFingerprint) return;
     lastFingerprint = nextFingerprint;
     try {
@@ -60,7 +60,7 @@
         schedule(response.retry_after_ms);
       }
     } catch {
-      // Browsing must remain unaffected when Footnote or its service worker is unavailable.
+      // Browsing must remain unaffected when FootNotes or its service worker is unavailable.
       lastFingerprint = "";
       schedule(60_000);
     }

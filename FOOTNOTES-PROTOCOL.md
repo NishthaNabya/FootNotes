@@ -1,8 +1,8 @@
-# FOOTNOTE PROTOCOL
+# FOOTNOTES PROTOCOL
 
 ## 1. Purpose
 
-This document defines the canonical data structure, file format, and routing rules for every piece of content captured by Footnote. It is the single source of truth for both the Chrome Extension (capture layer) and the Python server (processing layer).
+This document defines the canonical data structure, file format, and routing rules for every piece of content captured by FootNotes. It is the single source of truth for both the Chrome Extension (capture layer) and the Python server (processing layer).
 
 ---
 
@@ -174,7 +174,7 @@ vault/
   articles/     <slug>-<id8>.md
   youtube/      <slug>-<id8>.md      # frontmatter type: youtube
   ingest.log                          # SQLite metadata log (not human-readable)
-  videos/                             # Local MP4s — only when FOOTNOTE_DOWNLOAD_VIDEOS=1
+  videos/                             # Local MP4s — only when FOOTNOTES_DOWNLOAD_VIDEOS=1
 ```
 
 This exists to make the vault an Obsidian vault, not just a folder Obsidian
@@ -212,7 +212,7 @@ new one and appends a trailing `## Related` section linking to them:
 ```
 
 These generated wikilinks remain the cheap, exact-tag Obsidian view. They are
-not Footnote's canonical relationship store. Runtime Related uses the rebuildable
+not FootNotes's canonical relationship store. Runtime Related uses the rebuildable
 local embedding index instead: cosine similarity must reach `0.72`, then each
 shared tag adds `0.03` up to a `0.06` boost. It returns at most a few strong
 neighbors and falls back to these exact tag relationships only where a current
@@ -228,11 +228,11 @@ scale a single new write wouldn't reach.
 
 ---
 
-## 5. Footnote Ecosystem — Mind Map
+## 5. FootNotes Ecosystem — Mind Map
 
 ```mermaid
 mindmap
-  root((Footnote))
+  root((FootNotes))
     Capture Layer
       Chrome Extension
         Network Interception
@@ -329,13 +329,13 @@ If your server crashes mid-processing, the `status` field tells you exactly wher
 
 ### The Mind Map
 
-The mind map above is the **entire Footnote ecosystem** in one view. Here's what each branch means:
+The mind map above is the **entire FootNotes ecosystem** in one view. Here's what each branch means:
 
 - **Capture Layer** — everything that happens in your browser. The extension intercepts bookmarks, normalizes the data, and ships it to the server. If the server is down, it queues locally.
 - **Processing Layer** — the Python server. It receives data, queues it, enriches it with an LLM, and writes it to disk safely with file locks.
 - **Storage Layer** — your vault. One markdown file per entry, grouped by type. No database, no cloud, just plain text on your machine — and, because it's one file per entry, an Obsidian vault as-is.
 - **Enrichment Layer** — the intelligence. LLMs add structure and meaning. External APIs pull in transcripts and clean article text.
-- **User Experience** — the philosophy. Zero friction. You bookmark, Footnote handles the rest. No terminal, no config, no thinking.
+- **User Experience** — the philosophy. Zero friction. You bookmark, FootNotes handles the rest. No terminal, no config, no thinking.
 
 ### Why One File *Per Entry*?
 
