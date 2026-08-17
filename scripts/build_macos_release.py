@@ -45,6 +45,7 @@ def build() -> Path:
             "--name", "footnotes-runtime", "--distpath", str(BUILD / "dist"),
             "--workpath", str(BUILD / "work"), "--specpath", str(BUILD),
             "--add-data", f"{ROOT / 'onboarding'}:onboarding",
+            "--add-data", f"{ROOT / 'extension' / 'fonts'}:fonts",
             "--collect-all", "trafilatura",
             "--hidden-import", "uvicorn.logging", "--hidden-import", "uvicorn.loops.auto",
             "--hidden-import", "uvicorn.protocols.http.auto",

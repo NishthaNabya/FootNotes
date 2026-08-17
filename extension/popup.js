@@ -14,8 +14,11 @@ el("openRecall").addEventListener("click", () => {
 });
 
 function setStatus(kind, text, hintHTML = "") {
+  el("shell").className = `shell status-${kind}`;
+  el("connectionState").className = `connection-state status-${kind}`;
   el("dot").className = `dot ${kind}`;
-  el("statusText").textContent = text;
+  el("statusText").textContent = kind === "bad" ? "offline" : kind === "warn" ? "limited" : "connected";
+  el("statusText").title = text;
   el("hint").innerHTML = hintHTML;
 }
 
@@ -34,6 +37,26 @@ function sourceLabel(entry) {
   } catch {
     return "Web";
   }
+}
+
+function sourceHost(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").replace(/^twitter\.com$/, "x.com");
+  } catch {
+    return "web";
+  }
+}
+
+function relativeSavedTime(savedAt) {
+  const elapsed = Date.now() - new Date(savedAt).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 0) return "just now";
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 function renderResurfaced(entries) {
@@ -124,6 +147,11 @@ async function loadRecentCapture() {
 
   recentCapture = capture;
   el("savedTitle").textContent = capture.title || capture.source_url || "Saved memory";
+  el("savedMeta").textContent = `${sourceHost(capture.source_url)}  ·  ${relativeSavedTime(capture.saved_at)}`;
+  const icon = el("savedSourceIcon");
+  const source = sourceLabel(capture);
+  icon.className = `source-icon ${source === "YouTube" ? "youtube" : source === "X" ? "x" : "web"}`;
+  icon.textContent = source === "X" ? "𝕏" : source === "YouTube" ? "▶" : "↗";
   el("noteInput").value = capture.user_note || "";
   el("captureNote").classList.add("saved");
 }
@@ -179,10 +207,22 @@ async function refresh() {
   }
 
   const counts = health.entry_counts || {};
-  el("cTweets").textContent = counts.tweets || 0;
-  el("cArticles").textContent = counts.articles || 0;
-  el("cYoutube").textContent = counts.youtube || 0;
+  const sourceCounts = {
+    tweets: counts.tweets || 0,
+    articles: counts.articles || 0,
+    youtube: counts.youtube || 0,
+  };
+  el("cTweets").textContent = sourceCounts.tweets;
+  el("cArticles").textContent = sourceCounts.articles;
+  el("cYoutube").textContent = sourceCounts.youtube;
   el("cTotal").textContent = health.total_entries || 0;
+  el("cSources").textContent = Object.values(sourceCounts).filter(Boolean).length;
+  ["Articles", "Tweets", "Youtube"].forEach((name) => {
+    const count = sourceCounts[name.toLowerCase()];
+    el(`bar${name}`).style.flexGrow = String(count);
+    el(`bar${name}`).style.display = count ? "block" : "none";
+    el(`chip${name}`).classList.toggle("disabled", count === 0);
+  });
 
   const enrich = el("enrich");
   const providerHealth = health.provider_health || {};
@@ -199,8 +239,8 @@ async function refresh() {
   }
   const embeddings = health.embeddings || {};
   el("semantic").textContent = health.embedding_available
-    ? (embeddings.pending ? `${embeddings.ready || 0} ready · ${embeddings.pending} pending` : `${embeddings.ready || 0} ready`)
-    : "unavailable";
+    ? `${embeddings.ready || 0} embedded${embeddings.pending ? ` · ${embeddings.pending} pending` : ""}`
+    : "semantic off";
   const storage = health.vault_dir || "—";
   el("storage").textContent = storage.split("/").filter(Boolean).slice(-2).join("/");
   el("storage").title = storage;

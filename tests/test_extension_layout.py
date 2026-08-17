@@ -12,6 +12,10 @@ class ExtensionLayoutTests(unittest.TestCase):
         expected = {
             "background.js",
             "content.js",
+            "fonts/InstrumentSans-Variable.ttf",
+            "fonts/InstrumentSerif-Regular.ttf",
+            "fonts/OFL-InstrumentSans.txt",
+            "fonts/OFL-InstrumentSerif.txt",
             "icons/footnotes-mark.svg",
             "icons/icon16.png",
             "icons/icon32.png",
@@ -39,7 +43,7 @@ class ExtensionLayoutTests(unittest.TestCase):
             for path in EXTENSION_ROOT.rglob("*")
             if path.is_dir()
         }
-        self.assertEqual(directories, {"icons"})
+        self.assertEqual(directories, {"fonts", "icons"})
 
     def test_every_manifest_resource_exists(self):
         manifest = json.loads((EXTENSION_ROOT / "manifest.json").read_text())
@@ -63,7 +67,12 @@ class ExtensionLayoutTests(unittest.TestCase):
 
     def test_extension_html_dependencies_exist(self):
         dependencies = {
-            "popup.html": {"popup.js", "icons/icon48.png"},
+            "popup.html": {
+                "popup.js",
+                "icons/icon48.png",
+                "fonts/InstrumentSans-Variable.ttf",
+                "fonts/InstrumentSerif-Regular.ttf",
+            },
             "recall.html": {
                 "recall.css",
                 "recall-state.js",
@@ -103,19 +112,27 @@ class ExtensionLayoutTests(unittest.TestCase):
     def test_optional_personal_thought_uses_intent_prompt(self):
         popup = (EXTENSION_ROOT / "popup.html").read_text()
         self.assertIn("Why are you saving this?", popup)
-        self.assertIn("Optional — something future-you should remember", popup)
+        self.assertIn("Something future-you should know…", popup)
+        self.assertIn("Why are you saving this? Optional.", popup)
         self.assertIn("Saved ✓", popup)
         self.assertNotIn("Add a thought…", popup)
 
-    def test_frontend_uses_the_light_minimal_brand_system(self):
+    def test_frontend_uses_the_reference_driven_brand_system(self):
         popup = (EXTENSION_ROOT / "popup.html").read_text(encoding="utf-8")
         recall = (EXTENSION_ROOT / "recall.css").read_text(encoding="utf-8")
         onboarding = (REPOSITORY_ROOT / "onboarding" / "style.css").read_text(encoding="utf-8")
         for source in (popup, recall, onboarding):
             self.assertIn("color-scheme: light", source)
-            self.assertIn("#d85a30", source.lower())
-            self.assertNotIn("gradient(", source)
-            self.assertNotIn("box-shadow", source)
+            self.assertIn("Instrument Sans", source)
+            self.assertIn("Instrument Serif", source)
+        self.assertIn("#d85a30", recall.lower())
+        self.assertIn("gradient(", recall)
+        self.assertIn("border-radius: 28px", popup)
+        self.assertIn("background: #181712", popup)
+        self.assertIn("Open library", popup)
+        self.assertIn("grid-template-columns: minmax(0, 1.17fr)", onboarding)
+        self.assertIn(".status-card", onboarding)
+        self.assertIn(".getting-started", onboarding)
 
 
 if __name__ == "__main__":

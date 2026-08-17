@@ -153,13 +153,20 @@ function renderResults(nextResults, { initial = false } = {}) {
     button.setAttribute("role", "option");
     button.setAttribute("aria-selected", String(index === selectedIndex));
 
+    const marker = document.createElement("span");
+    marker.className = "result-index";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = String(index + 1).padStart(2, "0");
+    const body = document.createElement("div");
+    body.className = "result-body";
+
     const title = document.createElement("h2");
     title.className = "result-title";
     title.textContent = entry.title || entry.source_url || "Untitled memory";
     const meta = document.createElement("div");
     meta.className = "result-meta";
     meta.textContent = metaText(entry);
-    button.append(title, meta);
+    body.append(title, meta);
 
     if (entry.user_note) {
       const note = document.createElement("p");
@@ -168,22 +175,23 @@ function renderResults(nextResults, { initial = false } = {}) {
       noteLabel.className = "result-note-label";
       noteLabel.textContent = "Your thought";
       note.append(noteLabel, entry.user_note);
-      button.append(note);
+      body.append(note);
     }
 
     if (entry.excerpt) {
       const excerpt = document.createElement("p");
       excerpt.className = "result-excerpt";
       excerpt.textContent = entry.excerpt;
-      button.append(excerpt);
+      body.append(excerpt);
     }
     const match = FootNotesRecall.matchLabel(entry);
     if (match) {
       const reason = document.createElement("p");
       reason.className = "result-match";
       reason.textContent = match;
-      button.append(reason);
+      body.append(reason);
     }
+    button.append(marker, body);
     button.addEventListener("mouseenter", () => selectResult(index, false));
     button.addEventListener("click", () => openResult(entry));
     resultsElement.append(button);

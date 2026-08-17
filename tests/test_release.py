@@ -174,6 +174,7 @@ class LauncherAndPackagingTests(unittest.TestCase):
         self.assertIn("about <b>2 GB</b> total", script)
         self.assertIn('embeddinggemma:"about 622 MB"', script)
         self.assertIn('"qwen3:1.7b":"about 1.4 GB"', script)
+        self.assertIn("if (!event.isTrusted) return;", script)
 
     def test_duplicate_launch_reuses_existing_service(self):
         with patch.object(footnotes_app, "health", return_value={"service": "footnotes"}), \

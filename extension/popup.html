@@ -3,139 +3,157 @@
 <head>
   <meta charset="utf-8" />
   <style>
+    @font-face { font-family: "Instrument Sans"; src: url("fonts/InstrumentSans-Variable.ttf") format("truetype"); font-weight: 400 700; font-style: normal; font-display: swap; }
+    @font-face { font-family: "Instrument Serif"; src: url("fonts/InstrumentSerif-Regular.ttf") format("truetype"); font-weight: 400; font-style: normal; font-display: swap; }
     :root {
       color-scheme: light;
-      --paper: #fbfaf7;
-      --surface: #ffffff;
-      --ink: #1d1d1b;
-      --muted: #77736c;
-      --quiet: #a19c93;
-      --line: #e4e0d8;
-      --soft: #f2efe9;
-      --accent: #d85a30;
-      --accent-soft: #f8e9e3;
-      --success: #4e735a;
-      --warning: #a66a22;
-      --danger: #a3443b;
+      --paper: #fbf7ef; --panel: #f3eadc; --surface: #fffdf9; --ink: #201d18;
+      --muted: #8c8377; --quiet: #aaa195; --line: #e7ddcf; --accent: #e4542e;
+      --plum: #481b27; --success: #3f815e; --warning: #a66a22; --danger: #a3443b;
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      width: 328px;
-      color: var(--ink);
-      background: var(--paper);
-      font: 13px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      -webkit-font-smoothing: antialiased;
-    }
+    html { background: #28282e; }
+    body { margin: 0; width: 400px; padding: 10px 0; color: var(--ink); background: #28282e; font: 13px/1.42 "Instrument Sans", sans-serif; -webkit-font-smoothing: antialiased; }
     button, input { font: inherit; }
-    button:focus-visible, input:focus-visible { outline: 2px solid rgba(216,90,48,.35); outline-offset: 2px; }
+    button:focus-visible, input:focus-visible { outline: 2px solid rgba(228,84,46,.42); outline-offset: 2px; }
+    .shell { overflow: hidden; border-radius: 28px; background: var(--paper); box-shadow: 0 18px 42px rgba(0,0,0,.22); }
 
-    .head { display: flex; align-items: center; gap: 10px; padding: 18px 18px 15px; }
-    .head img { width: 25px; height: 25px; }
-    .wordmark { font-size: 14px; font-weight: 680; letter-spacing: -.01em; }
-    .sub { margin-top: 1px; color: var(--quiet); font-size: 10.5px; }
+    .head { display: flex; align-items: center; justify-content: space-between; padding: 17px 20px 15px; border-bottom: 1px solid var(--line); }
+    .identity { display: flex; align-items: center; gap: 13px; min-width: 0; }
+    .identity img { width: 27px; height: 27px; }
+    .wordmark { font-size: 16px; font-weight: 680; line-height: 1; letter-spacing: -.035em; }
+    .sub { margin-top: 2px; color: var(--muted); font-family: "Instrument Serif", serif; font-size: 14px; font-style: italic; line-height: 1; }
+    .connection-state { display: flex; align-items: center; gap: 9px; color: var(--success); }
+    #statusText { max-width: 102px; overflow: hidden; font-family: "Instrument Serif", serif; font-size: 14px; font-style: italic; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+    .signal { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+    .signal i { display: block; width: 2px; border-radius: 9px; background: currentColor; }
+    .signal i:nth-child(1) { height: 4px; opacity: .5; } .signal i:nth-child(2) { height: 8px; opacity: .72; } .signal i:nth-child(3) { height: 13px; }
+    .connection-state.status-warn { color: var(--warning); }
+    .connection-state.status-bad { color: var(--danger); }
+    #dot { display: none; }
+    .service-notice { display: none; margin: 12px 18px 0; padding: 9px 12px; border-radius: 14px; color: #6e544b; background: #f4dfd7; font-size: 10px; }
+    .shell.status-warn .service-notice, .shell.status-bad .service-notice { display: block; }
+    .service-notice:empty { display: none !important; }
 
-    .status { display: flex; align-items: center; gap: 8px; margin: 0 18px; padding: 11px 0 5px; border-top: 1px solid var(--line); }
-    .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
-    .ok { background: var(--success); }
-    .warn { background: var(--warning); }
-    .bad { background: var(--danger); }
-    #statusText { font-size: 11.5px; font-weight: 560; }
-    .hint { padding: 0 18px 13px 32px; color: var(--muted); font-size: 10.5px; }
-    .hint code { padding: 1px 4px; border-radius: 4px; background: var(--soft); font-size: 10px; user-select: all; }
-
-    .stats { display: none; margin: 0 18px 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-    .row { display: flex; justify-content: space-between; padding: 3px 0; color: var(--muted); font-size: 10.5px; }
-    .row b { color: var(--ink); font-weight: 560; }
-    .muted { color: var(--quiet) !important; }
-
-    .capture-note { display: none; margin: 0 18px 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .capture-note { display: none; padding: 18px 18px 13px; }
     .capture-note.saved { display: block; }
-    .saved-label { color: var(--success); font-size: 11px; font-weight: 650; }
-    .saved-title { margin: 3px 0 12px; overflow: hidden; color: var(--muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-    .note-prompt { display: block; margin-bottom: 6px; font-size: 11.5px; font-weight: 620; }
-    .note-form { display: flex; gap: 6px; }
-    .note-input { min-width: 0; flex: 1; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; outline: 0; color: var(--ink); background: var(--paper); font-size: 11px; transition: border-color 120ms ease, background 120ms ease; }
+    .capture-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .eyebrow { color: var(--muted); font-size: 9.5px; font-weight: 550; letter-spacing: .14em; text-transform: uppercase; }
+    .saved-label { color: var(--success); font-size: 11.5px; font-weight: 650; }
+    .memory { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; }
+    .source-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: #fff; background: var(--ink); font-size: 14px; }
+    .source-icon.youtube { background: #b92f28; } .source-icon.web { color: var(--ink); background: #eadfce; }
+    .saved-title { display: -webkit-box; overflow: hidden; margin: -2px 0 4px; font-family: "Instrument Serif", serif; font-size: 17px; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .saved-meta { color: var(--muted); font-size: 10px; letter-spacing: .035em; }
+    .note-card { margin-top: 14px; padding: 13px; border-radius: 16px; background: var(--panel); }
+    .note-prompt { display: block; margin-bottom: 9px; font-size: 12px; font-weight: 650; }
+    .note-form { display: flex; gap: 8px; }
+    .note-input { min-width: 0; flex: 1; padding: 10px 12px; border: 0; border-radius: 10px; outline: 0; color: var(--ink); background: var(--surface); font-size: 11px; box-shadow: inset 0 0 0 1px #ddd1c1; transition: box-shadow 150ms ease; }
     .note-input::placeholder { color: var(--quiet); }
-    .note-input:focus { border-color: rgba(216,90,48,.48); background: #fff; }
-    .note-save { padding: 7px 11px; border: 1px solid var(--ink); border-radius: 8px; color: #fff; background: var(--ink); font-size: 11px; font-weight: 600; cursor: pointer; transition: background 120ms ease; }
-    .note-save:hover { background: #373633; }
-    .note-save:disabled { opacity: .45; cursor: default; }
-    .note-message { min-height: 15px; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .note-input:focus { box-shadow: inset 0 0 0 1.5px rgba(72,27,39,.48); }
+    .note-save { padding: 10px 15px; border: 0; border-radius: 10px; color: #fff; background: var(--plum); font-size: 11.5px; font-weight: 650; cursor: pointer; transition: transform 150ms ease, background 150ms ease; }
+    .note-save:hover { background: #5d2635; transform: translateY(-1px); }
+    .note-save:active { transform: scale(.98); }
+    .note-save:disabled { opacity: .45; cursor: default; transform: none; }
+    .note-message { min-height: 0; color: var(--muted); font-size: 9.5px; }
+    .note-message:not(:empty) { margin-top: 6px; }
 
-    .resurface-setting { margin: 0 18px 14px; padding: 12px 0 0; border-top: 1px solid var(--line); }
-    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; font-size: 11px; font-weight: 550; cursor: pointer; }
-    .toggle-row input { appearance: none; width: 30px; height: 18px; margin: 0; padding: 2px; border: 1px solid #cac5bc; border-radius: 999px; background: #ddd9d1; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
-    .toggle-row input::before { content: ""; display: block; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform 140ms ease; }
-    .toggle-row input:checked { border-color: var(--accent); background: var(--accent); }
-    .toggle-row input:checked::before { transform: translateX(12px); }
-    .privacy { margin: 6px 44px 0 0; color: var(--quiet); font-size: 9.5px; line-height: 1.45; }
+    .resurface-setting { margin: 0 18px; padding: 15px 0 16px; border-top: 1px solid var(--line); }
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px; font-weight: 650; cursor: pointer; }
+    .toggle-row input { appearance: none; flex: 0 0 auto; width: 40px; height: 23px; margin: 0; padding: 3px; border: 0; border-radius: 999px; background: #d9cfbf; cursor: pointer; transition: background 150ms ease; }
+    .toggle-row input::before { content: ""; display: block; width: 17px; height: 17px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(47,39,31,.2); transition: transform 150ms ease; }
+    .toggle-row input:checked { background: var(--accent); }
+    .toggle-row input:checked::before { transform: translateX(17px); }
+    .privacy { max-width: 320px; margin: 4px 54px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
 
-    .resurfaced { display: none; margin: 0 18px 14px; padding: 11px 12px; border: 1px solid #ead7cf; border-radius: 10px; background: var(--accent-soft); }
+    .resurfaced { display: none; margin: 0 18px 15px; padding: 12px 14px; border-radius: 15px; background: #f1e6d8; }
     .resurfaced.visible { display: block; }
-    .resurfaced-title { margin-bottom: 4px; color: var(--accent); font-size: 10px; font-weight: 680; }
-    .resurfaced-item { display: block; width: 100%; padding: 8px 0; border: 0; border-top: 1px solid rgba(216,90,48,.13); color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .resurfaced-title { margin-bottom: 3px; color: var(--accent); font-size: 9px; font-weight: 680; letter-spacing: .1em; text-transform: uppercase; }
+    .resurfaced-item { display: block; width: 100%; padding: 8px 0; border: 0; border-top: 1px solid #ded1c0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
     .resurfaced-item:first-of-type { border-top: 0; }
-    .resurfaced-name { overflow: hidden; font-size: 11px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
-    .resurfaced-meta { color: var(--muted); font-size: 9.5px; }
-    .resurfaced-preview { margin-top: 3px; overflow: hidden; color: #69635c; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .resurfaced-name { overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+    .resurfaced-meta, .resurfaced-preview { overflow: hidden; color: var(--muted); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
 
-    .recall { display: block; width: calc(100% - 36px); margin: 0 18px 18px; padding: 10px 12px; border: 1px solid var(--ink); border-radius: 9px; color: #fff; background: var(--ink); text-align: center; text-decoration: none; cursor: pointer; font-weight: 620; transition: background 120ms ease, transform 120ms ease; }
-    .recall:hover { background: #373633; transform: translateY(-1px); }
+    .stats { display: none; padding: 15px 18px 14px; background: var(--panel); }
+    .stat-heading { display: flex; align-items: baseline; gap: 9px; }
+    #cTotal { font-size: 23px; font-weight: 700; letter-spacing: -.04em; }
+    .stat-caption { color: var(--muted); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; }
+    .source-strip { display: flex; overflow: hidden; height: 6px; margin: 12px 0; border-radius: 99px; background: #d8cebf; gap: 2px; }
+    .source-strip span { min-width: 0; }
+    #barArticles { background: var(--ink); } #barTweets { background: var(--accent); } #barYoutube { background: var(--plum); }
+    .chips { display: flex; gap: 6px; overflow: hidden; }
+    .chip { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 999px; color: var(--ink); background: var(--surface); font-size: 10px; white-space: nowrap; box-shadow: inset 0 0 0 1px #ded3c4; }
+    .chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink); }
+    .chip.x i { background: var(--accent); } .chip.video i { background: var(--plum); }
+    .chip.disabled { color: var(--quiet); background: transparent; box-shadow: inset 0 0 0 1px #d8cbbb; }
+    .chip.disabled i { background: transparent; box-shadow: inset 0 0 0 1px #c8bba9; }
+    .chip b { color: var(--muted); font-weight: 500; }
+    .health-meta { display: flex; align-items: center; gap: 8px; overflow: hidden; margin-top: 13px; color: var(--muted); font-size: 9.5px; white-space: nowrap; }
+    .health-meta .health-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    .health-meta .sep { color: #c7bbaa; }
+    .muted { color: var(--quiet) !important; }
+    #storage { overflow: hidden; text-overflow: ellipsis; }
+    #queueRow { display: none; margin-top: 7px; color: var(--danger); font-size: 9.5px; }
+
+    .foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 18px; color: #c7bdb2; background: #181712; font-size: 9.5px; }
+    .foot-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .foot-hint b { color: #fff; font-weight: 560; }
+    .recall { flex: 0 0 auto; padding: 0 0 2px; border: 0; border-bottom: 1px solid var(--accent); border-radius: 0; color: #fff; background: transparent; font-weight: 650; cursor: pointer; }
+    .recall:hover { color: #f5b09b; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; } }
   </style>
 </head>
 <body>
-  <div class="head">
-    <img src="icons/icon48.png" alt="" />
-    <div>
-      <div class="wordmark">FootNotes</div>
-      <div class="sub">Your context, kept.</div>
-    </div>
+  <div id="shell" class="shell status-warn">
+    <header class="head">
+      <div class="identity">
+        <img src="icons/icon48.png" alt="" />
+        <div><div class="wordmark">FootNotes</div><div class="sub">Your context, kept.</div></div>
+      </div>
+      <div id="connectionState" class="connection-state status-warn" aria-live="polite">
+        <span id="dot"></span><span id="statusText">checking</span>
+        <span class="signal" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
+    </header>
+    <div id="hint" class="service-notice"></div>
+
+    <section id="captureNote" class="capture-note" aria-label="Recent capture">
+      <div class="capture-heading"><span class="eyebrow">This page</span><span class="saved-label">Saved ✓</span></div>
+      <div class="memory">
+        <div id="savedSourceIcon" class="source-icon">✱</div>
+        <div><div id="savedTitle" class="saved-title"></div><div id="savedMeta" class="saved-meta"></div></div>
+      </div>
+      <div class="note-card">
+        <label class="note-prompt" for="noteInput">Why are you saving this?</label>
+        <form id="noteForm" class="note-form">
+          <input id="noteInput" class="note-input" maxlength="500" placeholder="Something future-you should know…" aria-label="Why are you saving this? Optional." />
+          <button id="noteSave" class="note-save" type="submit">Add note</button>
+        </form>
+        <div id="noteMessage" class="note-message" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="resurface-setting" aria-label="Contextual resurfacing setting">
+      <label class="toggle-row"><span>Resurface related memories</span><input id="resurfacingEnabled" type="checkbox" /></label>
+      <p class="privacy">Sends bounded public-page context to your embedding provider. Never stored.</p>
+    </section>
+    <section id="resurfaced" class="resurfaced" aria-label="Related memories for this page"></section>
+
+    <section id="stats" class="stats" aria-label="Library summary">
+      <div class="stat-heading"><b id="cTotal">0</b><span class="stat-caption">saved across <b id="cSources">0</b> sources</span></div>
+      <div class="source-strip" aria-hidden="true"><span id="barArticles"></span><span id="barTweets"></span><span id="barYoutube"></span></div>
+      <div class="chips">
+        <span id="chipArticles" class="chip"><i></i>Articles <b id="cArticles">0</b></span>
+        <span id="chipTweets" class="chip x"><i></i>X posts <b id="cTweets">0</b></span>
+        <span class="chip disabled"><i></i>Web pages <b>—</b></span>
+        <span id="chipYoutube" class="chip video"><i></i>Videos <b id="cYoutube">0</b></span>
+      </div>
+      <div class="health-meta"><span class="health-dot"></span><span>enrichment</span><b id="enrich" class="muted">—</b><span class="sep">·</span><b id="semantic" class="muted">—</b><span class="sep">·</span><b id="storage" class="muted" title="">—</b></div>
+      <div id="queueRow"><span id="cQueue">0</span> waiting to send</div>
+    </section>
+
+    <footer class="foot"><span class="foot-hint"><b>X:</b> bookmark&nbsp; | &nbsp;<b>else:</b> right-click → Save</span><button id="openRecall" class="recall" type="button">Open library</button></footer>
   </div>
-
-  <div class="status">
-    <span id="dot" class="dot warn"></span>
-    <span id="statusText">Checking…</span>
-  </div>
-
-  <div id="hint" class="hint"></div>
-
-  <section class="resurface-setting" aria-label="Contextual resurfacing setting">
-    <label class="toggle-row">
-      <span>Resurface related memories while browsing</span>
-      <input id="resurfacingEnabled" type="checkbox" />
-    </label>
-    <p class="privacy">Off by default. When enabled, bounded public-page context may be sent to your configured embedding provider. It is not saved.</p>
-  </section>
-
-  <section id="resurfaced" class="resurfaced" aria-label="Related memories for this page"></section>
-
-  <section id="captureNote" class="capture-note" aria-label="Recent capture">
-    <div class="saved-label">Saved ✓</div>
-    <div id="savedTitle" class="saved-title"></div>
-    <label class="note-prompt" for="noteInput">Why are you saving this?</label>
-    <form id="noteForm" class="note-form">
-      <input id="noteInput" class="note-input" maxlength="500" placeholder="Optional — something future-you should remember" aria-label="Why are you saving this? Optional." />
-      <button id="noteSave" class="note-save" type="submit">Save</button>
-    </form>
-    <div id="noteMessage" class="note-message" aria-live="polite"></div>
-  </section>
-
-  <div id="stats" class="stats">
-    <div class="row"><span>Tweets</span><b id="cTweets">0</b></div>
-    <div class="row"><span>Articles</span><b id="cArticles">0</b></div>
-    <div class="row"><span>Videos</span><b id="cYoutube">0</b></div>
-    <div class="row" style="margin-top:6px;padding-top:7px;border-top:1px solid var(--line)">
-      <span>Total saved</span><b id="cTotal">0</b>
-    </div>
-    <div class="row"><span>Enrichment</span><b id="enrich" class="muted">—</b></div>
-    <div class="row"><span>Semantic memory</span><b id="semantic" class="muted">—</b></div>
-    <div class="row"><span>Storage</span><b id="storage" class="muted" title="">—</b></div>
-    <div class="row" id="queueRow" style="display:none"><span>Waiting to send</span><b id="cQueue">0</b></div>
-  </div>
-
-  <button id="openRecall" class="recall" type="button">Recall a memory</button>
-
   <script src="popup.js"></script>
 </body>
 </html>

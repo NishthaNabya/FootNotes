@@ -8,45 +8,63 @@
 </head>
 <body>
   <main>
-    <header><span class="mark" aria-hidden="true">✱</span><span>FootNotes</span></header>
-    <section id="loading" class="card"><p>Checking your local FootNotes…</p></section>
+    <header class="topbar">
+      <div class="brand"><span class="mark" aria-hidden="true">✱</span><div><b>FootNotes</b><span>Your context, kept.</span></div></div>
+      <div class="service-summary"><span id="version">v0.1.0</span><i></i><em id="headerState">running</em><span class="signal" aria-hidden="true"><b></b><b></b><b></b></span></div>
+    </header>
 
-    <section id="setup" class="card hidden">
+    <section id="loading" class="loading-card"><p>Checking your local FootNotes…</p></section>
+
+    <section id="setup" class="setup-card hidden">
       <p class="eyebrow">FIRST RUN</p>
       <h1>Choose where your memories live.</h1>
-      <p>Your FootNotes memories are stored as normal Markdown files on your computer. You can open the folder in Obsidian, but you don’t need Obsidian.</p>
+      <p class="lead">Your FootNotes memories are stored as normal Markdown files on your computer. You can open the folder in Obsidian, but you don’t need Obsidian.</p>
       <label>Memory folder</label>
       <div class="path-row"><input id="vaultPath" spellcheck="false"><button id="chooseFolder" class="secondary">Choose…</button></div>
 
       <h2>Choose how FootNotes understands your memories.</h2>
       <label class="choice"><input type="radio" name="provider" value="ollama" checked><span><b>Local AI</b><small>Keep processing on this Mac. Uses Ollama; no AI API key required.</small></span></label>
-      <label class="choice"><input type="radio" name="provider" value="none"><span><b>No AI</b><small>Keep FootNotes simple. Capture and keyword search work; semantic Recall and automatic understanding are limited.</small></span></label>
-      <div id="ollamaHelp"><p id="ollamaState">Checking Local AI on this Mac…</p><div id="ollamaActions" class="hidden"><p id="ollamaGuidance"></p><div id="ollamaCommands"></div></div><button id="checkOllama" class="secondary" type="button">Check again</button></div>
-
+      <label class="choice"><input type="radio" name="provider" value="none"><span><b>No AI</b><small>Capture and keyword search work; semantic Recall and automatic understanding are limited.</small></span></label>
+      <div id="ollamaHelp"><p id="ollamaState">Checking Local AI on this Mac…</p><div id="ollamaActions" class="hidden"><p id="ollamaGuidance"></p><div id="ollamaCommands"></div></div><button id="checkOllama" class="secondary compact" type="button">Check again</button></div>
       <aside><b>Your data stays yours.</b> Memories and Local AI processing stay on this Mac, and FootNotes requires no account. Current pages are never saved automatically. Resurfacing is off until you enable it.</aside>
       <button id="finish">Finish setup</button>
       <p id="setupMessage" class="message" aria-live="polite"></p>
     </section>
 
-    <section id="status" class="card hidden">
-      <p class="eyebrow">LOCAL STATUS</p>
-      <h1>FootNotes is running.</h1>
-      <dl>
-        <div><dt>Local service</dt><dd class="good">Running</dd></div>
-        <div><dt>Memories live in</dt><dd id="statusVault"></dd></div>
-        <div><dt>Intelligence mode</dt><dd id="statusProvider"></dd></div>
-        <div><dt>Provider health</dt><dd id="statusProviderHealth"></dd></div>
-        <div><dt>Semantic memory</dt><dd id="statusSemantic"></dd></div>
-        <div><dt>Resurfacing</dt><dd>Off by default · change in extension</dd></div>
-      </dl>
-      <div class="next">
-        <h2>Make your first memory</h2>
-        <ol><li>Install FootNotes from the Chrome Web Store, or load the release extension locally.</li><li>Bookmark a post on X, or right-click a page and choose <b>Save to FootNotes</b>.</li><li>Open the FootNotes toolbar icon and look for <b>Saved ✓</b>.</li></ol>
-        <p>Press <b>⌘⇧O</b> whenever you’re trying to remember something.</p>
+    <section id="status" class="dashboard hidden">
+      <article class="status-card">
+        <p class="eyebrow">LOCAL STATUS</p>
+        <h1 id="statusTitle">FootNotes is running.</h1>
+        <p id="statusLead" class="lead">Everything you save stays on this machine — indexed, embedded and searchable without leaving your disk.</p>
+
+        <dl>
+          <div><dt>MEMORIES</dt><dd id="statusSemantic"></dd></div>
+          <div><dt>INTELLIGENCE</dt><dd><span id="statusProvider"></span><span id="statusProviderHealth" class="inline-health"></span></dd></div>
+          <div><dt>STORED IN</dt><dd id="statusVault" class="path"></dd></div>
+          <div><dt>RESURFACING</dt><dd>Off by default · toggle in the extension</dd></div>
+        </dl>
+
+        <div class="status-actions">
+          <button id="stop">Stop FootNotes</button>
+          <button id="changeProvider" class="secondary">Change intelligence mode</button>
+          <button id="logAction" class="log-action">open log ↗</button>
+          <span id="logPath" class="hidden"></span>
+        </div>
+      </article>
+
+      <div class="guide-column">
+        <article class="getting-started">
+          <p class="eyebrow muted-eyebrow">GETTING STARTED</p>
+          <h2>Make your first memory</h2>
+          <ol>
+            <li><span>1</span><p>Install the FootNotes extension from the Chrome Web Store, or load the release build locally.</p></li>
+            <li><span>2</span><p>On X, bookmark a post. Everywhere else, right-click → <b>Save to FootNotes.</b></p></li>
+            <li><span>3</span><p>Recall it later. Press <kbd>⌘⇧O</kbd> anywhere to search your memories in plain language.</p></li>
+          </ol>
+          <div class="saved-callout"><b>Saved ✓</b><span>is what the toolbar popup shows once a page is in your library.</span></div>
+        </article>
+        <aside class="background-note"><i></i><p>Enrichment is running in the background. New saves become searchable within a few seconds.</p></aside>
       </div>
-      <p class="quiet">Logs: <span id="logPath"></span></p>
-      <button id="changeProvider" class="secondary">Change intelligence mode</button>
-      <button id="stop" class="secondary">Stop FootNotes</button>
     </section>
   </main>
   <script src="/footnotes/app.js"></script>

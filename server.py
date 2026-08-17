@@ -2217,6 +2217,12 @@ def onboarding_assets_dir() -> Path:
     return bundled_root / "onboarding"
 
 
+def font_assets_dir() -> Path:
+    if getattr(sys, "_MEIPASS", None):
+        return Path(sys._MEIPASS) / "fonts"
+    return Path(__file__).parent / "extension" / "fonts"
+
+
 def require_local_setup_origin(request: Request) -> None:
     origin = request.headers.get("origin", "")
     allowed = {"http://localhost:8000", "http://127.0.0.1:8000"}
@@ -2236,12 +2242,20 @@ async def footnotes_asset(asset_name: str):
     return FileResponse(onboarding_assets_dir() / asset_name)
 
 
+@app.get("/footnotes/fonts/{font_name}", include_in_schema=False)
+async def footnotes_font(font_name: str):
+    if font_name not in {"InstrumentSans-Variable.ttf", "InstrumentSerif-Regular.ttf"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(font_assets_dir() / font_name)
+
+
 @app.get("/footnotes-api/setup")
 async def setup_status():
     await verify_provider()
     config = load_config()
     progress = embedding_progress()
     return {
+        "version": app.version,
         "setup_complete": config.setup_complete,
         "vault_path": str(VAULT_DIR if PRODUCT_MODE else config.resolved_vault_path),
         "provider": intelligence_provider.name,
@@ -2326,6 +2340,24 @@ async def stop_footnotes(request: Request, background_tasks: BackgroundTasks):
     require_local_setup_origin(request)
     background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
     return {"status": "stopping"}
+
+
+@app.post("/footnotes-api/open-log")
+async def open_footnotes_log(request: Request):
+    require_local_setup_origin(request)
+    if sys.platform != "darwin":
+        raise HTTPException(status_code=501, detail="Opening the log is currently available on macOS")
+    log_file = Path.home() / "Library" / "Logs" / "FootNotes" / "footnotes.log"
+    if not log_file.exists():
+        raise HTTPException(status_code=404, detail="FootNotes has not created a log file yet")
+    await asyncio.to_thread(
+        subprocess.run,
+        ["/usr/bin/open", str(log_file)],
+        check=True,
+        capture_output=True,
+        timeout=10,
+    )
+    return {"status": "opened"}
 
 
 @app.post("/ingest", status_code=202)

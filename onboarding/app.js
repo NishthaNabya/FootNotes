@@ -41,18 +41,44 @@ function showSetup(data = {}) {
   providerChanged();
 }
 
+function compactPath(path) {
+  return String(path || "").replace(/^\/Users\/[^/]+/, "~");
+}
+
+function setServiceState(running) {
+  $("headerState").textContent = running ? "running" : "stopped";
+  document.querySelector(".service-summary").classList.toggle("stopped", !running);
+  $("statusTitle").textContent = `FootNotes is ${running ? "running" : "stopped"}.`;
+  if (!running) {
+    $("statusLead").textContent = "Your memories remain safely stored on this machine. Open FootNotes again whenever you want to capture or recall something.";
+  }
+}
+
 function showStatus(data) {
   $("loading").classList.add("hidden"); $("setup").classList.add("hidden"); $("status").classList.remove("hidden");
-  $("statusVault").textContent = data.vault_path;
+  $("version").textContent = `v${data.version || "0.1.0"}`;
+  setServiceState(true);
+  $("statusVault").textContent = compactPath(data.vault_path);
   const names = { ollama:"Local AI · Ollama", none:"No AI" };
   const health = data.provider_health || {};
   $("statusProvider").textContent = names[data.provider] || data.provider;
-  $("statusProviderHealth").textContent = health.message || (data.provider_available ? "Connected" : "Unavailable — local features still work");
+  const providerReady = Boolean(health.embedding_ready && health.enrichment_ready);
+  $("statusProviderHealth").textContent = providerReady ? "ready" : data.provider === "none" ? "keyword mode" : "local features ready";
+  $("statusProviderHealth").classList.toggle("unavailable", !providerReady);
   if (data.provider === "ollama" && health.missing_models?.length) {
-    $("statusProviderHealth").textContent += ` Download: ${health.missing_models.join(" and ")}.`;
+    $("statusProviderHealth").textContent = "setup incomplete";
   }
   const semantic = data.semantic_memory || {};
-  $("statusSemantic").textContent = data.provider === "none" ? "Unavailable in No AI mode" : semantic.pending ? `${semantic.ready || 0} ready · ${semantic.pending} scheduled gradually` : `${semantic.ready || 0} memories ready`;
+  $("statusSemantic").replaceChildren();
+  const count = document.createElement("span");
+  count.textContent = data.provider === "none" ? "Keyword Recall ready" : `${semantic.ready || 0} ready`;
+  $("statusSemantic").append(count);
+  if (data.provider !== "none") {
+    const detail = document.createElement("span");
+    detail.className = "semantic-detail";
+    detail.textContent = semantic.pending ? ` · ${semantic.pending} indexing` : " · semantic index built";
+    $("statusSemantic").append(detail);
+  }
   $("logPath").textContent = data.log_path || "~/Library/Logs/FootNotes/footnotes.log";
 }
 
@@ -76,6 +102,23 @@ $("finish").addEventListener("click", async () => {
     state = await api("/footnotes-api/setup"); showStatus(state);
   } catch (error) { message.className="message error"; message.textContent=error.message; } finally { button.disabled=false; }
 });
-$("stop").addEventListener("click", async () => { $("stop").disabled=true; $("stop").textContent="Stopping…"; try { await api("/footnotes-api/stop", {method:"POST",body:"{}"}); } catch {} });
+$("stop").addEventListener("click", async (event) => {
+  // Browser/session restoration and automation must never terminate the local
+  // service. Only a genuine user activation may reach the stop endpoint.
+  if (!event.isTrusted) return;
+  $("stop").disabled = true; $("stop").textContent = "Stopping…";
+  try {
+    await api("/footnotes-api/stop", {method:"POST",body:"{}"});
+    setServiceState(false); $("stop").textContent = "Stopped";
+  } catch { $("stop").disabled = false; $("stop").textContent = "Stop FootNotes"; }
+});
 $("changeProvider").addEventListener("click", () => showSetup(state));
+$("logAction").addEventListener("click", async () => {
+  const button = $("logAction");
+  try {
+    await api("/footnotes-api/open-log", { method:"POST", body:"{}" });
+    button.textContent = "log opened";
+    setTimeout(() => { button.textContent = "open log ↗"; }, 1800);
+  } catch { button.title = $("logPath").textContent; }
+});
 init().catch((error) => { $("loading").innerHTML=`<p>${error.message}</p>`; });
